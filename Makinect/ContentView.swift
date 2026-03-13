@@ -1,53 +1,77 @@
-//
-//  ContentView.swift
-//  Makinect
-//
-//  Created by Johnny Neang on 3/13/26.
-//
-
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @State private var manager = KinectManager()
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .toolbar {
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
+        VStack(spacing: 0) {
+            // Camera feed
+            ZStack {
+                Color.black
+
+                if let frame = manager.currentFrame {
+                    Image(nsImage: frame)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } else {
+                    placeholderView
                 }
             }
-        } detail: {
-            Text("Select an item")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            // Controls
+            HStack(spacing: 16) {
+                Picker("Mode", selection: $manager.cameraMode) {
+                    ForEach(CameraMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 240)
+
+                Spacer()
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(manager.isConnected ? .green : .red)
+                        .frame(width: 8, height: 8)
+
+                    Text(manager.statusMessage)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button(manager.isConnected ? "Disconnect" : "Connect") {
+                    if manager.isConnected {
+                        manager.disconnect()
+                    } else {
+                        manager.connect()
+                    }
+                }
+                .controlSize(.large)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
         }
+        .frame(minWidth: 700, minHeight: 560)
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
+    private var placeholderView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: manager.isConnected ? "camera" : "camera.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+            Text(manager.statusMessage)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+
+            if !manager.isConnected {
+                Text("Connect a Kinect sensor and press Connect")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -55,5 +79,4 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
 }
