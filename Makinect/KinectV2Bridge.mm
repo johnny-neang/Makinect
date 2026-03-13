@@ -1,3 +1,22 @@
+// KinectV2Bridge — Objective-C++ wrapper for Kinect v2 streaming and USB detection
+//
+// This file uses the following open-source libraries:
+//
+//   libfreenect2 — Open-source Kinect v2 driver
+//   Copyright (c) 2013-2016 individual OpenKinect contributors
+//   Licensed under Apache 2.0 / GPL v2
+//   https://github.com/OpenKinect/libfreenect2
+//
+//   libusb — Cross-platform USB device access library
+//   Copyright (c) 2001 Johannes Erdfelt et al.
+//   Licensed under LGPL 2.1+
+//   https://github.com/libusb/libusb
+//
+//   libjpeg-turbo — JPEG codec used by libfreenect2 for color decoding
+//   Copyright (c) 2009-2024 D. R. Commander et al.
+//   Licensed under BSD / IJG / zlib
+//   https://github.com/libjpeg-turbo/libjpeg-turbo
+
 #import "KinectV2Bridge.h"
 #include <libfreenect2/libfreenect2.hpp>
 #include <libfreenect2/frame_listener_impl.h>

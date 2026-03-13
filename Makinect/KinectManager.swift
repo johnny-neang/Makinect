@@ -1,3 +1,12 @@
+// KinectManager — Manages Kinect v1 and v2 connections, streaming, and frame conversion
+//
+// Kinect v1 support uses libfreenect:
+//   Copyright (c) 2010-2015 individual OpenKinect contributors
+//   Licensed under Apache 2.0 / GPL v2
+//   https://github.com/OpenKinect/libfreenect
+//
+// Kinect v2 support uses libfreenect2 via KinectV2Bridge (see KinectV2Bridge.mm)
+
 import Foundation
 import AppKit
 

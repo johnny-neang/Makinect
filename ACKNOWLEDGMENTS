@@ -1,0 +1,45 @@
+Makinect — Open-Source Acknowledgments
+=======================================
+
+Makinect relies on the following open-source projects. We gratefully
+acknowledge the contributors who made this work possible.
+
+
+libfreenect
+-----------
+Open-source driver for the Microsoft Kinect v1 (Xbox 360 / Kinect for Windows).
+Copyright (c) 2010-2015 individual OpenKinect contributors.
+Licensed under the Apache License 2.0 and/or GNU General Public License v2.
+https://github.com/OpenKinect/libfreenect
+
+Key contributors include Hector Martin, Josh Blake, Kyle Machulis,
+and the broader OpenKinect community.
+
+
+libfreenect2
+-------------
+Open-source driver for the Microsoft Kinect v2 (Xbox One / Kinect for Windows v2).
+Copyright (c) 2013-2016 individual OpenKinect contributors.
+Licensed under the Apache License 2.0 and/or GNU General Public License v2.
+https://github.com/OpenKinect/libfreenect2
+
+Key contributors include Lingzhu Xiang, Florian Echtler, Christian Kerl,
+and the broader OpenKinect community.
+
+
+libusb
+------
+Cross-platform library for USB device access, used by both libfreenect
+and libfreenect2 for communicating with Kinect hardware.
+Copyright (c) 2001 Johannes Erdfelt et al.
+Licensed under the GNU Lesser General Public License v2.1 or later.
+https://github.com/libusb/libusb
+
+
+libjpeg-turbo
+-------------
+High-performance JPEG codec, used by libfreenect2 for decoding the
+Kinect v2 color stream.
+Copyright (c) 2009-2024 D. R. Commander and contributors.
+Licensed under a BSD-style license, the IJG license, and the zlib license.
+https://github.com/libjpeg-turbo/libjpeg-turbo
