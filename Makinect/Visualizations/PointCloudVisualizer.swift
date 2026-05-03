@@ -5,19 +5,14 @@ import MetalKit
 import simd
 
 private struct PointCloudUniforms {
-    var viewProj: float4x4 = matrix_identity_float4x4
-    var time: Float = 0
-    var pointSize: Float = 4
-    var rms: Float = 0
-    var onset: Float = 0
-    var bands: (Float, Float, Float, Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0, 0, 0, 0)
-    var fx: Float = 365.5
-    var fy: Float = 365.5
-    var cx: Float = 260.0
-    var cy: Float = 209.0
-    var depthW: Float = 256
-    var depthH: Float = 212
+    var viewProj: float4x4 = matrix_identity_float4x4    // 64
+    var timing: SIMD4<Float> = .zero                     // (time, pointSize, rms, onset)
+    var bandsLow: SIMD4<Float> = .zero                   // bands[0..3]
+    var bandsHigh: SIMD4<Float> = .zero                  // bands[4..7]
+    var intrinsics: SIMD4<Float> = SIMD4(365.5, 365.5, 260.0, 209.0)
+    var dims: SIMD4<Float> = SIMD4(256, 212, 0, 0)       // (depthW, depthH, _, _)
 }
+// Total 144 bytes, 16-aligned.
 
 @MainActor
 final class PointCloudVisualizer: Visualizer {
@@ -78,21 +73,24 @@ final class PointCloudVisualizer: Visualizer {
         var u = PointCloudUniforms()
         let aspect = Float(view.drawableSize.width / max(1, view.drawableSize.height))
         u.viewProj = makeViewProj(aspect: aspect)
-        u.time = inputs.timeSeconds
-        u.rms = inputs.audio.rms
-        u.onset = inputs.audio.onset ? 1 : 0
-        u.pointSize = 3.5 + Float(view.drawableSize.height) / 1080.0 * 1.5
-        u.depthW = Float(pointGridW)
-        u.depthH = Float(pointGridH)
+        let pointSize = 3.5 + Float(view.drawableSize.height) / 1080.0 * 1.5
+        u.timing = SIMD4(
+            inputs.timeSeconds,
+            pointSize,
+            inputs.audio.rms,
+            inputs.audio.onset ? 1 : 0
+        )
+        u.dims = SIMD4(Float(pointGridW), Float(pointGridH), 0, 0)
         let b = inputs.audio.bands
         if b.count >= 8 {
-            u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
+            u.bandsLow = SIMD4(b[0], b[1], b[2], b[3])
+            u.bandsHigh = SIMD4(b[4], b[5], b[6], b[7])
         }
 
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexTexture(inputs.textures.depthTexture, index: 0)
         encoder.setVertexTexture(inputs.textures.colorTexture, index: 1)
-        encoder.setVertexBytes(&u, length: MemoryLayout<PointCloudUniforms>.size, index: 0)
+        encoder.setVertexBytes(&u, length: MemoryLayout<PointCloudUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: pointGridW * pointGridH)
     }
 }

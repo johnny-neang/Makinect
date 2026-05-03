@@ -5,16 +5,13 @@ import MetalKit
 import simd
 
 private struct HeightFieldUniforms {
-    var viewProj: float4x4 = matrix_identity_float4x4
-    var time: Float = 0
-    var rms: Float = 0
-    var onset: Float = 0
-    var bands: (Float, Float, Float, Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0, 0, 0, 0)
-    var depthW: Float = 256
-    var depthH: Float = 212
-    var nearMM: Float = 500
-    var farMM: Float = 4000
+    var viewProj: float4x4 = matrix_identity_float4x4   // 64
+    var timing: SIMD4<Float> = .zero                    // (time, rms, onset, _)
+    var bandsLow: SIMD4<Float> = .zero                  // bands[0..3]
+    var bandsHigh: SIMD4<Float> = .zero                 // bands[4..7]
+    var dims: SIMD4<Float> = SIMD4(256, 212, 500, 4000) // (depthW, depthH, nearMM, farMM)
 }
+// Total 128 bytes, 16-aligned.
 
 @MainActor
 final class HeightFieldVisualizer: Visualizer {
@@ -84,22 +81,18 @@ final class HeightFieldVisualizer: Visualizer {
         let view4 = lookAt(eye: eye, center: SIMD3<Float>(0, 0, 0), up: SIMD3<Float>(0, 1, 0))
         let proj = perspective(fovYRadians: .pi / 3.5, aspect: aspect, near: 0.01, far: 50)
         u.viewProj = proj * view4
-        u.time = inputs.timeSeconds
-        u.rms = inputs.audio.rms
-        u.onset = inputs.audio.onset ? 1 : 0
-        u.depthW = Float(gridW)
-        u.depthH = Float(gridH)
-        u.nearMM = inputs.segmentationNearMM
-        u.farMM = inputs.segmentationFarMM
+        u.timing = SIMD4(inputs.timeSeconds, inputs.audio.rms, inputs.audio.onset ? 1 : 0, 0)
+        u.dims = SIMD4(Float(gridW), Float(gridH), inputs.segmentationNearMM, inputs.segmentationFarMM)
         let b = inputs.audio.bands
         if b.count >= 8 {
-            u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
+            u.bandsLow = SIMD4(b[0], b[1], b[2], b[3])
+            u.bandsHigh = SIMD4(b[4], b[5], b[6], b[7])
         }
 
         encoder.setRenderPipelineState(pipeline)
         encoder.setDepthStencilState(depthState)
         encoder.setVertexTexture(inputs.textures.depthTexture, index: 0)
-        encoder.setVertexBytes(&u, length: MemoryLayout<HeightFieldUniforms>.size, index: 0)
+        encoder.setVertexBytes(&u, length: MemoryLayout<HeightFieldUniforms>.stride, index: 0)
         encoder.drawIndexedPrimitives(
             type: .triangle, indexCount: indexCount,
             indexType: .uint32, indexBuffer: indexBuffer, indexBufferOffset: 0

@@ -218,15 +218,14 @@ fragment float4 postfx_fs(
 // MARK: - #2 Point Cloud
 
 struct PointCloudUniforms {
-    float4x4 viewProj;
-    float time;
-    float pointSize;
-    float rms;
-    float onset;
-    float bands[8];
-    float fx, fy, cx, cy;  // depth intrinsics
-    float depthW, depthH;
+    float4x4 viewProj;     // 64
+    float4 timing;         // (time, pointSize, rms, onset)
+    float4 bandsLow;       // bands[0..3]
+    float4 bandsHigh;      // bands[4..7]
+    float4 intrinsics;     // (fx, fy, cx, cy)
+    float4 dims;           // (depthW, depthH, _, _)
 };
+// Total 144 bytes, all 16-aligned.
 
 struct PointVertexOut {
     float4 position [[position]];
@@ -242,11 +241,13 @@ vertex PointVertexOut pointcloud_vs(
 ) {
     constexpr sampler s(filter::nearest, address::clamp_to_edge);
 
-    int dw = int(u.depthW);
+    float depthW = u.dims.x;
+    float depthH = u.dims.y;
+    int dw = int(depthW);
     int x = int(vid) % dw;
     int y = int(vid) / dw;
 
-    float2 depthUV = (float2(x, y) + 0.5) / float2(u.depthW, u.depthH);
+    float2 depthUV = (float2(x, y) + 0.5) / float2(depthW, depthH);
     float z = depthTex.sample(s, depthUV).r;
 
     PointVertexOut out;
@@ -257,29 +258,34 @@ vertex PointVertexOut pointcloud_vs(
         return out;
     }
 
+    float time = u.timing.x;
+    float pointSize = u.timing.y;
+    float rms = u.timing.z;
+    float onset = u.timing.w;
+    float fx = u.intrinsics.x;
+    float fy = u.intrinsics.y;
+    float cx = u.intrinsics.z;
+    float cy = u.intrinsics.w;
+
     // Unproject depth-camera intrinsics to camera space (meters, +Z forward)
     float zm = z / 1000.0;
-    float xm = (float(x) - u.cx) * zm / u.fx;
-    float ym = (float(y) - u.cy) * zm / u.fy;
+    float xm = (float(x) - cx) * zm / fx;
+    float ym = (float(y) - cy) * zm / fy;
 
     // Audio displacement
-    float bass = u.bands[0] + u.bands[1];
-    float pulse = u.rms * 0.3 + u.onset * 0.4;
+    float bass = u.bandsLow.x + u.bandsLow.y;
+    float pulse = rms * 0.3 + onset * 0.4;
     float ang = atan2(ym, xm);
-    float radial = sin(ang * 6.0 + u.time * 2.0) * 0.05 * (bass + pulse);
+    float radial = sin(ang * 6.0 + time * 2.0) * 0.05 * (bass + pulse);
     xm += cos(ang) * radial;
     ym += sin(ang) * radial;
 
-    float4 worldPos = float4(xm, -ym, -zm, 1.0);  // flip y for screen, push forward as -Z
+    float4 worldPos = float4(xm, -ym, -zm, 1.0);
     out.position = u.viewProj * worldPos;
-    out.pointSize = u.pointSize * (1.0 + pulse * 1.5);
+    out.pointSize = pointSize * (1.0 + pulse * 1.5);
 
-    // Sample color from registered color frame at depth-camera coords
-    // (For Kinect v2: we use the depth pixel's matching color via the same UV in the
-    // registered color frame; since we don't pass a separate registered color buffer
-    // here, fall back to a procedural color modulated by audio.)
     float depthN = saturate((zm - 0.5) / 4.0);
-    float3 col = hsv2rgb(float3(0.6 - depthN * 0.5 + u.bands[3] * 0.1, 0.85, 0.7 + pulse * 0.3));
+    float3 col = hsv2rgb(float3(0.6 - depthN * 0.5 + u.bandsLow.w * 0.1, 0.85, 0.7 + pulse * 0.3));
     out.color = col;
     return out;
 }
@@ -348,14 +354,13 @@ fragment float4 color_passthrough_fs(
 // MARK: - #6 Height Field Mesh
 
 struct HeightFieldUniforms {
-    float4x4 viewProj;
-    float time;
-    float rms;
-    float onset;
-    float bands[8];
-    float depthW, depthH;
-    float nearMM, farMM;
+    float4x4 viewProj;     // 64
+    float4 timing;         // (time, rms, onset, _)
+    float4 bandsLow;       // bands[0..3]
+    float4 bandsHigh;      // bands[4..7]
+    float4 dims;           // (depthW, depthH, nearMM, farMM)
 };
+// Total 128 bytes, all 16-aligned.
 
 struct HeightFieldVertexOut {
     float4 position [[position]];
@@ -370,23 +375,29 @@ vertex HeightFieldVertexOut heightfield_vs(
     constant HeightFieldUniforms &u [[buffer(0)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
-    int dw = int(u.depthW);
+    float depthW = u.dims.x;
+    float depthH = u.dims.y;
+    float nearMM = u.dims.z;
+    float farMM = u.dims.w;
+    float time = u.timing.x;
+
+    int dw = int(depthW);
     int x = int(vid) % dw;
     int y = int(vid) / dw;
-    float2 uv = float2(float(x) / (u.depthW - 1.0), float(y) / (u.depthH - 1.0));
+    float2 uv = float2(float(x) / (depthW - 1.0), float(y) / (depthH - 1.0));
     float z = depthTex.sample(s, uv).r;
-    if (z <= 0 || isnan(z) || z > u.farMM * 1.2) z = u.farMM;
+    if (z <= 0 || isnan(z) || z > farMM * 1.2) z = farMM;
 
-    float zN = saturate((z - u.nearMM) / max(1.0, u.farMM - u.nearMM));
-    float ripple = sin(uv.x * 30.0 + u.time * 2.0) * u.bands[1] * 0.1
-                 + cos(uv.y * 25.0 - u.time * 1.5) * u.bands[3] * 0.08;
+    float zN = saturate((z - nearMM) / max(1.0, farMM - nearMM));
+    float ripple = sin(uv.x * 30.0 + time * 2.0) * u.bandsLow.y * 0.1
+                 + cos(uv.y * 25.0 - time * 1.5) * u.bandsLow.w * 0.08;
 
     float3 pos = float3(uv.x * 2.0 - 1.0, (1.0 - zN) * 0.6 + ripple, -(uv.y * 2.0 - 1.0));
 
     HeightFieldVertexOut out;
     out.position = u.viewProj * float4(pos, 1);
     out.worldPos = pos;
-    out.color = hsv2rgb(float3(0.55 - zN * 0.4 + u.bands[5] * 0.15, 0.7, 0.6 + (1.0 - zN) * 0.4));
+    out.color = hsv2rgb(float3(0.55 - zN * 0.4 + u.bandsHigh.y * 0.15, 0.7, 0.6 + (1.0 - zN) * 0.4));
     out.uv = uv;
     return out;
 }
