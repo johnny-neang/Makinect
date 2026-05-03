@@ -2532,3 +2532,215 @@ fragment float4 memory_palace_fs(
 
     return float4(col, 1.0);
 }
+
+// MARK: - #40 Parametric Swarm (Casberry-inspired)
+//
+// 65k GPU particles arranged via *parametric formulas* on each particle's index
+// — not advected by physics. Six formations cycle and smooth-morph: Fibonacci
+// sphere, torus, double helix, cube lattice, Lissajous knot, audio-warped
+// attractor. Onset triggers a morph step; bass twists and scales the formation;
+// treble shimmers per-particle hue. Plasma additive-glow rendering with a
+// neon palette (default green, hue-drifts with bass into cyan / magenta).
+//
+// Body presence (when a Kinect skeleton is detected) attracts the swarm center
+// to the body's center of mass — the swarm wraps around the dancer.
+//
+// Reference: https://particles.casberry.in/ — geodesic point-cloud aesthetic.
+
+struct PSWUniforms {
+    float4x4 viewProj;
+    float4 ctrl;          // (time, count, morphPhase, particleSize)
+    float4 audio;         // (rms, onset, bassLow, treb)
+    float4 bandsLow;      // bands[0..3]
+    float4 bandsHi;       // bands[4..7]
+    float4 bodyAttract;   // (cx, cy, cz, strength)  — strength=0 → no body
+    float4 palette;       // (baseHue, hueSpread, sat, val)
+};
+
+struct PSWParticle {
+    float4 posPad;
+};
+
+inline float3 psw_fib_sphere(float i, float n) {
+    // Golden-angle sphere — perfect distribution of points (geodesic sphere).
+    float phi = 2.39996323;
+    float y = 1.0 - (i / max(1.0, n - 1.0)) * 2.0;
+    float r = sqrt(1.0 - y * y);
+    float th = phi * i;
+    return float3(cos(th) * r, y, sin(th) * r);
+}
+
+inline float3 psw_torus(float i, float n, float tWraps, float tw, float t) {
+    float u = (i / n) * tWraps * 6.2831853;
+    float v = (i / n) * 41.0 * 6.2831853 + t * 0.6;
+    float R = 0.70 + tw * 0.10;
+    float r = 0.22 + tw * 0.08;
+    return float3((R + r * cos(v)) * cos(u),
+                  r * sin(v),
+                  (R + r * cos(v)) * sin(u));
+}
+
+inline float3 psw_helix(float i, float n, float t) {
+    // Double helix — odd/even index split into two strands.
+    float strand = (fmod(i, 2.0) < 1.0) ? 1.0 : -1.0;
+    float u = (i / n - 0.5) * 12.0 * 3.14159 + t * 0.3;
+    float r = 0.42;
+    float y = (i / n - 0.5) * 1.6;
+    float ang = strand > 0 ? u : (u + 3.14159);
+    return float3(cos(ang) * r, y, sin(ang) * r);
+}
+
+inline float3 psw_cube_lattice(float i, float n) {
+    int N = int(round(pow(n, 1.0/3.0)));
+    int idx = int(i);
+    int x = idx % N;
+    int y = (idx / N) % N;
+    int z = (idx / (N * N)) % N;
+    return (float3(float(x), float(y), float(z)) / max(1.0, float(N - 1)) - 0.5) * 1.4;
+}
+
+inline float3 psw_lissajous(float i, float n, float t) {
+    // Lissajous knot — three-frequency curve in 3D.
+    float s = i / n * 6.2831853;
+    float a = 3.0, b = 2.0, c = 5.0;
+    float ph = t * 0.3;
+    return float3(sin(a * s + ph) * 0.65,
+                  sin(b * s + ph * 1.3) * 0.65,
+                  sin(c * s + ph * 0.7) * 0.65);
+}
+
+inline float3 psw_attractor(float i, float n, float t, float bass) {
+    // Audio-warped strange-attractor approximation.
+    float s = (i / n) * 6.2831853 * 8.0;
+    float r = 0.5 + sin(s * 0.13 + t * 0.4) * 0.25;
+    float ang = s * 1.7 + t * (0.5 + bass * 0.8);
+    float y = sin(s * 0.7 + t * 0.3) * (0.5 + bass * 0.3);
+    return float3(cos(ang) * r, y, sin(ang) * r);
+}
+
+kernel void psw_step_kernel(
+    device PSWParticle *particles [[buffer(0)]],
+    constant PSWUniforms &u [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    float n = u.ctrl.y;
+    if (float(gid) >= n) return;
+
+    float i = float(gid);
+    float t = u.ctrl.x;
+    float morph = u.ctrl.z;
+    float bass = u.audio.z;
+    float treb = u.audio.w;
+
+    // Two adjacent modes — fractional part is the smooth-step morph blend.
+    int modeA = int(floor(morph)) % 6;
+    int modeB = (modeA + 1) % 6;
+    float interp = smoothstep(0.0, 1.0, fract(morph));
+
+    float3 pA, pB;
+    {
+        if      (modeA == 0) pA = psw_fib_sphere(i, n);
+        else if (modeA == 1) pA = psw_torus(i, n, 8.0, bass, t);
+        else if (modeA == 2) pA = psw_helix(i, n, t);
+        else if (modeA == 3) pA = psw_cube_lattice(i, n);
+        else if (modeA == 4) pA = psw_lissajous(i, n, t);
+        else                 pA = psw_attractor(i, n, t, bass);
+    }
+    {
+        if      (modeB == 0) pB = psw_fib_sphere(i, n);
+        else if (modeB == 1) pB = psw_torus(i, n, 8.0, bass, t);
+        else if (modeB == 2) pB = psw_helix(i, n, t);
+        else if (modeB == 3) pB = psw_cube_lattice(i, n);
+        else if (modeB == 4) pB = psw_lissajous(i, n, t);
+        else                 pB = psw_attractor(i, n, t, bass);
+    }
+
+    float3 pos = mix(pA, pB, interp);
+
+    // Audio scale — bass swells the swarm.
+    pos *= 1.0 + bass * 0.30 + u.audio.x * 0.18;
+
+    // Per-particle high-frequency jitter on treble.
+    float jSeed = i * 0.000037 + t * 0.5;
+    float3 jitter = float3(sin(jSeed * 31.0), sin(jSeed * 53.0), sin(jSeed * 71.0));
+    pos += jitter * (0.005 + treb * 0.020);
+
+    // Body attractor — drift swarm center toward the body's COM (when present).
+    if (u.bodyAttract.w > 0.001) {
+        pos += u.bodyAttract.xyz * u.bodyAttract.w;
+    }
+
+    // Slow Y-axis rotation for auto-orbit.
+    float rotAng = t * 0.20 + u.audio.x * 0.5;
+    float ca = cos(rotAng);
+    float sa = sin(rotAng);
+    float rx = pos.x * ca + pos.z * sa;
+    float rz = -pos.x * sa + pos.z * ca;
+    pos.x = rx;
+    pos.z = rz;
+
+    // Onset shockwave — outward push.
+    if (u.audio.y > 0.5) {
+        pos += normalize(pos + 0.0001) * 0.06;
+    }
+
+    particles[gid].posPad = float4(pos, 1.0);
+}
+
+struct PSWVertexOut {
+    float4 position [[position]];
+    float pointSize [[point_size]];
+    float3 color;
+    float intensity;
+};
+
+vertex PSWVertexOut psw_vs(
+    uint vid [[vertex_id]],
+    const device PSWParticle *particles [[buffer(0)]],
+    constant PSWUniforms &u [[buffer(1)]]
+) {
+    PSWParticle p = particles[vid];
+    PSWVertexOut o;
+    o.position = u.viewProj * float4(p.posPad.xyz, 1.0);
+
+    float baseSize = u.ctrl.w;
+    float pump = u.audio.x * 4.0 + u.audio.y * 6.0;
+    o.pointSize = clamp(baseSize + pump, 1.0, 16.0);
+
+    // Color: hue varies subtly across index (Casberry default = neon green),
+    // drifts with bass into cyan/magenta on heavy beats.
+    float i = float(vid) / max(1.0, u.ctrl.y);
+    float baseHue = u.palette.x;
+    float spread = u.palette.y;
+    float hue = fract(baseHue + i * spread + u.audio.z * 0.18 - u.audio.w * 0.12);
+    float val = u.palette.w * (0.7 + 0.3 * sin(p.posPad.x * 4.0 + u.ctrl.x));
+    val += u.audio.x * 0.30;
+    o.color = hsv2rgb(float3(hue, u.palette.z, saturate(val)));
+    o.intensity = 1.0;
+    return o;
+}
+
+fragment float4 psw_fs(PSWVertexOut in [[stage_in]], float2 pc [[point_coord]]) {
+    // Plasma-glow Gaussian dot — bright core + soft halo.
+    float r = length(pc - 0.5) * 2.0;
+    float core = exp(-r * r * 4.0);
+    float halo = exp(-r * r * 1.2) * 0.35;
+    float a = (core + halo) * in.intensity;
+    return float4(in.color * a * 1.6, a * 0.85);
+}
+
+// Background scrim — subtle radial gradient + a hint of nebula so the swarm
+// floats in something rather than pure black.
+fragment float4 psw_bg_fs(
+    PassthroughVertexOut in [[stage_in]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    float2 p = in.uv - 0.5;
+    float r = length(p);
+    float bass = u.bands[0] + u.bands[1];
+    float3 c = mix(float3(0.003, 0.006, 0.010), float3(0.010, 0.025, 0.020), in.uv.y);
+    c += float3(0.005, 0.030, 0.020) * exp(-r * 3.0) * (0.4 + bass * 0.6);
+    c += float3(0.020, 0.060, 0.040) * u.onset * 0.30;
+    c *= 0.97 + 0.03 * sin(in.uv.y * 1080.0 * 0.7);
+    return float4(c, 1.0);
+}

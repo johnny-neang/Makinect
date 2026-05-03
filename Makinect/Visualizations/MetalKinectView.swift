@@ -94,6 +94,25 @@ struct MetalKinectView: NSViewRepresentable {
             case .spectralOcean:     return SpectralOceanVisualizer(device: device, library: library, colorPixelFormat: format)
             case .forestOfLight:     return ForestOfLightVisualizer(device: device, library: library, colorPixelFormat: format)
             case .memoryPalace:      return MemoryPalaceVisualizer(device: device, library: library, colorPixelFormat: format)
+            // — research-grounded replacements —
+            case .plasmaSea:             return PlasmaSeaVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .strandVeil:            return StrandVeilVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .boidsMurmuration:      return BoidsMurmurationVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .sandMandala:           return SandMandalaVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .liquidLightCalligraphy: return LiquidLightCalligraphyVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .magneticIronFilings:   return MagneticIronFilingsVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .liquidChromeBody:      return LiquidChromeBodyVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .mocapConstellation:    return MocapConstellationVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .dissipativeCells:      return DissipativeCellsVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .vortexRingSmoke:       return VortexRingSmokeVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .hyperbolicTunnel:      return HyperbolicTunnelVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .filamentCosmology:     return FilamentCosmologyVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .velvetPetalField:      return VelvetPetalFieldVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .glitchMosaic:          return GlitchMosaicVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .kineticWireframe:      return KineticWireframeVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .impastoPainter:        return ImpastoPainterVisualizer(device: device, library: library, colorPixelFormat: format)
+            // — Casberry-inspired parametric swarm —
+            case .parametricSwarm:       return ParametricSwarmVisualizer(device: device, library: library, colorPixelFormat: format)
             }
         }
 

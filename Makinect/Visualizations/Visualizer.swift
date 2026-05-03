@@ -66,6 +66,25 @@ enum VisualizationKind: String, CaseIterable, Identifiable {
     case spectralOcean = "Spectral Ocean"
     case forestOfLight = "Forest of Light"
     case memoryPalace = "Memory Palace"
+    // — research-grounded replacements (16) —
+    case plasmaSea = "Plasma Sea"
+    case strandVeil = "Strand Veil"
+    case boidsMurmuration = "Boids Murmuration"
+    case sandMandala = "Sand Mandala"
+    case liquidLightCalligraphy = "Liquid Light Calligraphy"
+    case magneticIronFilings = "Magnetic Iron Filings"
+    case liquidChromeBody = "Liquid Chrome Body"
+    case mocapConstellation = "Mocap Constellation"
+    case dissipativeCells = "Dissipative Cells"
+    case vortexRingSmoke = "Vortex Ring Smoke"
+    case hyperbolicTunnel = "Hyperbolic Tunnel"
+    case filamentCosmology = "Filament Cosmology"
+    case velvetPetalField = "Velvet Petal Field"
+    case glitchMosaic = "Glitch Mosaic"
+    case kineticWireframe = "Kinetic Wireframe"
+    case impastoPainter = "Impasto Painter"
+    // — Casberry-inspired parametric swarm —
+    case parametricSwarm = "Parametric Swarm"
 
     var id: String { rawValue }
 }
