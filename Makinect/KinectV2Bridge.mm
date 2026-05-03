@@ -21,6 +21,7 @@
 #include <libfreenect2/libfreenect2.hpp>
 #include <libfreenect2/frame_listener_impl.h>
 #include <libfreenect2/packet_pipeline.h>
+#include <libfreenect2/registration.h>
 #import <IOKit/IOKitLib.h>
 
 // MARK: - Known Kinect USB Product IDs (Vendor 0x045e = Microsoft)
@@ -56,6 +57,9 @@ static const int kColorBytes = kColorWidth * kColorHeight * 4; // BGRX
 static const int kDepthWidth = 512;
 static const int kDepthHeight = 424;
 static const int kDepthFloats = kDepthWidth * kDepthHeight;
+static const int kBigDepthWidth = 1920;
+static const int kBigDepthHeight = 1082;  // libfreenect2 adds 1 blank row top and bottom
+static const int kBigDepthFloats = kBigDepthWidth * kBigDepthHeight;
 
 // MARK: - MKDetectedKinect
 
@@ -75,8 +79,18 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
     NSLock *_frameLock;
     unsigned char *_colorBuffer;
     float *_depthBuffer;
+    float *_irBuffer;
+    float *_registeredDepthBuffer;
     BOOL _hasNewColor;
     BOOL _hasNewDepth;
+    BOOL _hasNewIR;
+    BOOL _hasNewRegisteredDepth;
+
+    // Registration (depth-to-color mapping)
+    libfreenect2::Registration *_registration;
+    libfreenect2::Frame *_undistortedFrame;
+    libfreenect2::Frame *_bigdepthFrame;
+    libfreenect2::Frame *_registeredColorFrame;
 
     NSString *_serialNumber;
     NSString *_firmwareVersion;
@@ -157,6 +171,8 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
         _frameLock = [[NSLock alloc] init];
         _colorBuffer = (unsigned char *)calloc(kColorBytes, 1);
         _depthBuffer = (float *)calloc(kDepthFloats, sizeof(float));
+        _irBuffer = (float *)calloc(kDepthFloats, sizeof(float));
+        _registeredDepthBuffer = (float *)calloc(kBigDepthFloats, sizeof(float));
         _running = NO;
     }
     return self;
@@ -170,6 +186,8 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
     }
     free(_colorBuffer);
     free(_depthBuffer);
+    free(_irBuffer);
+    free(_registeredDepthBuffer);
 }
 
 - (int)enumerateDevices {
@@ -186,13 +204,22 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
     _serialNumber = [NSString stringWithUTF8String:_device->getSerialNumber().c_str()];
     _firmwareVersion = [NSString stringWithUTF8String:_device->getFirmwareVersion().c_str()];
 
+    // Create registration for depth-to-color mapping (using factory calibration)
+    _registration = new libfreenect2::Registration(
+        _device->getIrCameraParams(),
+        _device->getColorCameraParams()
+    );
+    _undistortedFrame = new libfreenect2::Frame(kDepthWidth, kDepthHeight, 4);
+    _bigdepthFrame = new libfreenect2::Frame(kBigDepthWidth, kBigDepthHeight, 4);
+    _registeredColorFrame = new libfreenect2::Frame(kDepthWidth, kDepthHeight, 4);
+
     return YES;
 }
 
 - (BOOL)startStreaming {
     if (!_device || _running) return NO;
 
-    unsigned int types = libfreenect2::Frame::Color | libfreenect2::Frame::Depth;
+    unsigned int types = libfreenect2::Frame::Color | libfreenect2::Frame::Depth | libfreenect2::Frame::Ir;
     _listener = new libfreenect2::SyncMultiFrameListener(types);
 
     _device->setColorFrameListener(_listener);
@@ -226,6 +253,14 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
 
         libfreenect2::Frame *color = frames[libfreenect2::Frame::Color];
         libfreenect2::Frame *depth = frames[libfreenect2::Frame::Depth];
+        libfreenect2::Frame *ir = frames[libfreenect2::Frame::Ir];
+
+        // Perform registration while we still have the original frame pointers
+        bool didRegister = false;
+        if (color && color->data && depth && depth->data && _registration) {
+            _registration->apply(color, depth, _undistortedFrame, _registeredColorFrame, true, _bigdepthFrame, nullptr);
+            didRegister = true;
+        }
 
         [_frameLock lock];
         if (color && color->data) {
@@ -235,6 +270,14 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
         if (depth && depth->data) {
             memcpy(_depthBuffer, depth->data, kDepthFloats * sizeof(float));
             _hasNewDepth = YES;
+        }
+        if (ir && ir->data) {
+            memcpy(_irBuffer, ir->data, kDepthFloats * sizeof(float));
+            _hasNewIR = YES;
+        }
+        if (didRegister) {
+            memcpy(_registeredDepthBuffer, _bigdepthFrame->data, kBigDepthFloats * sizeof(float));
+            _hasNewRegisteredDepth = YES;
         }
         [_frameLock unlock];
 
@@ -264,6 +307,10 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
 
 - (void)closeDevice {
     [self stopStreaming];
+    if (_registration) { delete _registration; _registration = nullptr; }
+    if (_undistortedFrame) { delete _undistortedFrame; _undistortedFrame = nullptr; }
+    if (_bigdepthFrame) { delete _bigdepthFrame; _bigdepthFrame = nullptr; }
+    if (_registeredColorFrame) { delete _registeredColorFrame; _registeredColorFrame = nullptr; }
     if (_device) {
         _device->close();
         _device = nullptr;
@@ -291,6 +338,28 @@ static const int kDepthFloats = kDepthWidth * kDepthHeight;
     if (hasNew) {
         memcpy(outBuffer, _depthBuffer, kDepthFloats * sizeof(float));
         _hasNewDepth = NO;
+    }
+    [_frameLock unlock];
+    return hasNew;
+}
+
+- (BOOL)copyIRFrame:(float *)outBuffer {
+    [_frameLock lock];
+    BOOL hasNew = _hasNewIR;
+    if (hasNew) {
+        memcpy(outBuffer, _irBuffer, kDepthFloats * sizeof(float));
+        _hasNewIR = NO;
+    }
+    [_frameLock unlock];
+    return hasNew;
+}
+
+- (BOOL)copyRegisteredDepthFrame:(float *)outBuffer {
+    [_frameLock lock];
+    BOOL hasNew = _hasNewRegisteredDepth;
+    if (hasNew) {
+        memcpy(outBuffer, _registeredDepthBuffer, kBigDepthFloats * sizeof(float));
+        _hasNewRegisteredDepth = NO;
     }
     [_frameLock unlock];
     return hasNew;

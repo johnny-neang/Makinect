@@ -4,8 +4,8 @@ struct ContentView: View {
     @State private var manager = KinectManager()
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Camera feed
+        HSplitView {
+            // Main camera view
             ZStack {
                 Color.black
 
@@ -16,46 +16,27 @@ struct ContentView: View {
                 } else {
                     placeholderView
                 }
+
+                // Skeleton overlay
+                if shouldShowSkeleton {
+                    SkeletonOverlayView(
+                        skeletons: manager.poseDetector.skeletons,
+                        imageSize: CGSize(width: 1920, height: 1080)
+                    )
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Divider()
-
-            // Controls
-            HStack(spacing: 16) {
-                Picker("Mode", selection: $manager.cameraMode) {
-                    ForEach(CameraMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
+            // Side panel
+            SidePanel(manager: manager)
                 .frame(width: 240)
-
-                Spacer()
-
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(manager.isConnected ? .green : .red)
-                        .frame(width: 8, height: 8)
-
-                    Text(manager.statusMessage)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-
-                Button(manager.isConnected ? "Disconnect" : "Connect") {
-                    if manager.isConnected {
-                        manager.disconnect()
-                    } else {
-                        manager.connect()
-                    }
-                }
-                .controlSize(.large)
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
         }
-        .frame(minWidth: 700, minHeight: 560)
+        .frame(minWidth: 960, minHeight: 600)
+    }
+
+    private var shouldShowSkeleton: Bool {
+        manager.cameraMode == .skeleton ||
+        (manager.cameraMode == .rgb && manager.showSkeleton)
     }
 
     private var placeholderView: some View {

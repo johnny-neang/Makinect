@@ -6,6 +6,6 @@ struct MakinectApp: App {
         WindowGroup {
             ContentView()
         }
-        .defaultSize(width: 800, height: 620)
+        .defaultSize(width: 1100, height: 700)
     }
 }

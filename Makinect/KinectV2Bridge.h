@@ -42,6 +42,13 @@ typedef NS_ENUM(NSInteger, MKKinectVersion) {
 /// Copy latest depth frame. Buffer must be at least 512*424*sizeof(float) bytes. Returns YES if new frame.
 - (BOOL)copyDepthFrame:(float *)outBuffer;
 
+/// Copy latest IR frame. Buffer must be at least 512*424*sizeof(float) bytes. Returns YES if new frame.
+- (BOOL)copyIRFrame:(float *)outBuffer;
+
+/// Copy registered depth aligned to color camera. Buffer must be at least 1920*1082*sizeof(float) bytes.
+/// Output is 1920x1082 (one blank row top/bottom per libfreenect2 convention). Returns YES if new frame.
+- (BOOL)copyRegisteredDepthFrame:(float *)outBuffer;
+
 @property (nonatomic, readonly) BOOL isStreaming;
 @property (nonatomic, readonly, nullable) NSString *serialNumber;
 @property (nonatomic, readonly, nullable) NSString *firmwareVersion;
