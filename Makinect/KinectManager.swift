@@ -86,6 +86,16 @@ final class KinectManager {
     let poseDetector = PoseDetector()
     var showSkeleton = false
 
+    // Audio (FFT bands / RMS / onset for visualizations)
+    let audio = AudioEngine()
+
+    // Active GPU visualization (nil = use CPU CameraMode pipeline)
+    var visualization: VisualizationKind? {
+        didSet {
+            if visualization != nil { audio.start() } else { audio.stop() }
+        }
+    }
+
     // Segmentation parameters
     var segmentationNearMM: Float = 500
     var segmentationFarMM: Float = 2000
@@ -114,6 +124,20 @@ final class KinectManager {
     private var v2DepthBuffer = [Float](repeating: 0, count: kV2DepthPixelCount)
     private var v2IRBuffer = [Float](repeating: 0, count: kV2DepthPixelCount)
     private var v2RegisteredDepthBuffer = [Float](repeating: 0, count: kV2BigDepthPixelCount)
+
+    // GPU texture sink (set by MetalKinectView when a visualization mode is active)
+    private weak var visualizationTextures: KinectMetalTextures?
+
+    func attachVisualizationTextures(_ textures: KinectMetalTextures) {
+        self.visualizationTextures = textures
+    }
+
+    private var needsPoseForVisualization: Bool {
+        switch visualization {
+        case .skeletonRibbons, .bodyPaint: return true
+        default: return false
+        }
+    }
 
     init() {
         scanForDevices()
@@ -252,6 +276,32 @@ final class KinectManager {
         let gotColor = v2ColorBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
             bridge.copyColorFrame(buf.baseAddress!)
         }
+
+        // GPU visualization path: pull all streams and upload to MTLTextures.
+        // CPU CGImage path is skipped to keep the main thread free.
+        if visualization != nil, let textures = visualizationTextures {
+            if gotColor { textures.uploadColor(v2ColorBuffer) }
+
+            let gotDepth = v2DepthBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
+                bridge.copyDepthFrame(buf.baseAddress!)
+            }
+            if gotDepth { textures.uploadDepth(v2DepthBuffer) }
+
+            let gotRegDepth = v2RegisteredDepthBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
+                bridge.copyRegisteredDepthFrame(buf.baseAddress!)
+            }
+            if gotRegDepth { textures.uploadRegisteredDepth(v2RegisteredDepthBuffer) }
+
+            // Pose detection still runs (skeleton visualizers depend on it).
+            if gotColor {
+                latestColorCGImage = Self.createV2ColorCGImage(from: v2ColorBuffer)
+                if needsPoseForVisualization, let cg = latestColorCGImage {
+                    poseDetector.detectPose(in: cg)
+                }
+            }
+            return
+        }
+
         if gotColor {
             latestColorCGImage = Self.createV2ColorCGImage(from: v2ColorBuffer)
         }
