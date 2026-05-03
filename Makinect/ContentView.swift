@@ -9,7 +9,9 @@ struct ContentView: View {
             ZStack {
                 Color.black
 
-                if let frame = manager.currentFrame {
+                if let viz = manager.visualization {
+                    MetalKinectView(manager: manager, kind: viz)
+                } else if let frame = manager.currentFrame {
                     Image(nsImage: frame)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -17,8 +19,8 @@ struct ContentView: View {
                     placeholderView
                 }
 
-                // Skeleton overlay
-                if shouldShowSkeleton {
+                // Skeleton overlay (only relevant for legacy CPU mode)
+                if manager.visualization == nil && shouldShowSkeleton {
                     SkeletonOverlayView(
                         skeletons: manager.poseDetector.skeletons,
                         imageSize: CGSize(width: 1920, height: 1080)
