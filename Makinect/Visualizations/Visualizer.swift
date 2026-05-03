@@ -14,6 +14,20 @@ struct VisualizerInputs {
     let segmentationFarMM: Float
 }
 
+/// Shared "everything you need" uniform struct used by most fragment-only
+/// visualizers. Layout matches the `Uniforms` struct in Shaders.metal.
+/// Total: 60 bytes (Metal pads to 64). Keep field order in sync with the .metal side.
+struct DepthLavaUniforms {
+    var time: Float = 0
+    var rms: Float = 0
+    var onset: Float = 0
+    var aspect: Float = 1
+    var bands: (Float, Float, Float, Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0, 0, 0, 0)
+    var nearMM: Float = 500
+    var farMM: Float = 4000
+    var pad0: Float = 0
+}
+
 @MainActor
 protocol Visualizer: AnyObject {
     init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat)
@@ -30,14 +44,28 @@ extension Visualizer {
 }
 
 enum VisualizationKind: String, CaseIterable, Identifiable {
-    case depthLava = "Depth Lava"
-    case skeletonRibbons = "Skeleton Ribbons"
-    case halftone = "Halftone NPR"
-    case postFX = "Audio PostFX"
     case pointCloud = "3D Point Cloud"
-    case heightField = "Height Field"
     case bodyPaint = "AR Body Paint"
-    case shaderSandbox = "Hot-Reload Shader"
+    case nebula = "Volumetric Nebula"
+    case opticalFlow = "Optical-Flow Painter"
+    case particleStorm = "GPU Particle Storm"
+    case stableFluids = "Stable Fluids"
+    case voxelSculpt = "Voxel Sculpt"
+    // — placeholders awaiting research-grounded implementations —
+    case iridescentPlumage = "Iridescent Plumage"
+    case cathedralOfBones = "Cathedral of Bones"
+    case pixelStorm = "Pixel Storm"
+    case bodyOfPetals = "Body of Petals"
+    case mandelbulbAviary = "Mandelbulb Aviary"
+    case smokeGod = "Smoke God"
+    case stainedCathedral = "Stained Cathedral"
+    case volumetricAurora = "Volumetric Aurora"
+    case glassOcean = "Glass Ocean"
+    case mercuryStorm = "Mercury Storm"
+    case origamiBody = "Origami Body"
+    case spectralOcean = "Spectral Ocean"
+    case forestOfLight = "Forest of Light"
+    case memoryPalace = "Memory Palace"
 
     var id: String { rawValue }
 }

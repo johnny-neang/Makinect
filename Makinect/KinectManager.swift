@@ -18,6 +18,15 @@ enum CameraMode: String, CaseIterable {
     case segmented = "Segmented"
 }
 
+/// Where the visualization textures get their pixels from.
+/// `.kinect` uses a connected device; `.synthetic` runs procedural, audio-reactive
+/// compute kernels so visualizers work standalone without a sensor.
+enum InputSource: String, CaseIterable, Identifiable {
+    case kinect = "Kinect"
+    case synthetic = "Synthetic"
+    var id: String { rawValue }
+}
+
 /// Describes a detected Kinect device
 struct DetectedKinect: Identifiable {
     let id = UUID()
@@ -96,6 +105,21 @@ final class KinectManager {
         }
     }
 
+    /// Where visualization textures are sourced from. Defaults to `.kinect` to preserve
+    /// existing behavior. When set to `.synthetic`, any active Kinect connection is
+    /// released and `MetalKinectView` fills the textures via compute kernels instead.
+    var source: InputSource = .kinect {
+        didSet {
+            guard oldValue != source else { return }
+            if source == .synthetic {
+                if isConnected { disconnect() }
+                statusMessage = "Synthetic source — no device required"
+            } else {
+                scanForDevices()
+            }
+        }
+    }
+
     // Segmentation parameters
     var segmentationNearMM: Float = 500
     var segmentationFarMM: Float = 2000
@@ -134,7 +158,7 @@ final class KinectManager {
 
     private var needsPoseForVisualization: Bool {
         switch visualization {
-        case .skeletonRibbons, .bodyPaint: return true
+        case .bodyPaint, .cathedralOfBones: return true
         default: return false
         }
     }
@@ -181,6 +205,7 @@ final class KinectManager {
     // MARK: - Connect / Disconnect
 
     func connect() {
+        guard source == .kinect else { return }
         guard !isConnected else { return }
 
         let hasV2 = detectedDevices.contains { $0.version == .kinectV2 }

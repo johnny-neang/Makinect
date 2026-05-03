@@ -15,40 +15,60 @@ struct SidePanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Connection
-                GroupBox("Connection") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Circle()
-                                .fill(manager.isConnected ? .green : .red)
-                                .frame(width: 8, height: 8)
-                            Text(manager.isConnected ? "Connected" : "Disconnected")
-                        }
-
-                        Button(manager.isConnected ? "Disconnect" : "Connect") {
-                            if manager.isConnected {
-                                manager.disconnect()
-                            } else {
-                                manager.connect()
-                            }
-                        }
-                        .controlSize(.large)
-                        .frame(maxWidth: .infinity)
-                    }
-                }
-
-                // Top-level mode
-                Picker("", selection: $topMode) {
-                    ForEach(TopMode.allCases) { Text($0.rawValue).tag($0) }
+                // Source — pick where the visualization textures come from.
+                // Defaults to .kinect; .synthetic frees the user from needing a device.
+                Picker("Source", selection: $manager.source) {
+                    ForEach(InputSource.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .onChange(of: topMode) { _, new in
-                    if new == .stream { manager.visualization = nil }
-                    else if manager.visualization == nil { manager.visualization = .depthLava }
+                .onChange(of: manager.source) { _, new in
+                    // Synthetic mode is visualize-only — Stream is a CPU pipeline that
+                    // depends on real device frames.
+                    if new == .synthetic {
+                        topMode = .visualize
+                        if manager.visualization == nil { manager.visualization = .pointCloud }
+                    }
                 }
 
-                if topMode == .stream {
+                // Connection — only relevant in Kinect mode
+                if manager.source == .kinect {
+                    GroupBox("Connection") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Circle()
+                                    .fill(manager.isConnected ? .green : .red)
+                                    .frame(width: 8, height: 8)
+                                Text(manager.isConnected ? "Connected" : "Disconnected")
+                            }
+
+                            Button(manager.isConnected ? "Disconnect" : "Connect") {
+                                if manager.isConnected {
+                                    manager.disconnect()
+                                } else {
+                                    manager.connect()
+                                }
+                            }
+                            .controlSize(.large)
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+
+                // Top-level mode (Stream is hidden in synthetic since it requires a device)
+                if manager.source == .kinect {
+                    Picker("", selection: $topMode) {
+                        ForEach(TopMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .onChange(of: topMode) { _, new in
+                        if new == .stream { manager.visualization = nil }
+                        else if manager.visualization == nil { manager.visualization = .pointCloud }
+                    }
+                }
+
+                if manager.source == .kinect && topMode == .stream {
                     streamSection
                 } else {
                     visualizationSection
@@ -118,7 +138,7 @@ struct SidePanel: View {
     private var visualizationSection: some View {
         GroupBox("Visualization") {
             Picker("Visualization", selection: Binding(
-                get: { manager.visualization ?? .depthLava },
+                get: { manager.visualization ?? .pointCloud },
                 set: { manager.visualization = $0 }
             )) {
                 ForEach(VisualizationKind.allCases) { kind in
@@ -159,17 +179,9 @@ struct SidePanel: View {
             }
         }
 
-        if manager.visualization == .pointCloud || manager.visualization == .heightField {
+        if manager.visualization == .pointCloud || manager.visualization == .voxelSculpt {
             GroupBox("Camera") {
                 Text("Drag to orbit · Pinch / scroll to zoom")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-
-        if manager.visualization == .shaderSandbox {
-            GroupBox("Shader Sandbox") {
-                Text("Edit ~/Library/Application Support/Makinect/shaders/user.metal — saves recompile live.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

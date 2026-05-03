@@ -1,16 +1,21 @@
-// HalftoneVisualizer — Candidate #4: NPR halftone over color, masked by depth.
+// PixelStormVisualizer — Vertical sort cascades behind the body silhouette.
+// Each column is sorted by luminance with thresholds modulated per audio band;
+// streamers fall at bass-driven speeds; onset triggers a horizontal "wave" of
+// pure white that rolls down the screen. The body itself stays pristine — sort
+// happens only in negative space. Inspiration: Onformative's *Meandering River*,
+// Kim Asendorf's pixel sort, Glitch Art canon.
 
 import Metal
 import MetalKit
 
 @MainActor
-final class HalftoneVisualizer: Visualizer {
+final class PixelStormVisualizer: Visualizer {
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = library.makeFunction(name: "passthrough_vs")
-        desc.fragmentFunction = library.makeFunction(name: "halftone_fs")
+        desc.fragmentFunction = library.makeFunction(name: "pixel_storm_fs")
         desc.colorAttachments[0].pixelFormat = colorPixelFormat
         desc.depthAttachmentPixelFormat = .depth32Float
         guard let pso = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }
@@ -18,7 +23,7 @@ final class HalftoneVisualizer: Visualizer {
     }
 
     func draw(in view: MTKView, encoder: MTLRenderCommandEncoder, inputs: VisualizerInputs) {
-        var u = DepthLavaUniforms()  // same layout
+        var u = DepthLavaUniforms()
         u.time = inputs.timeSeconds
         u.rms = inputs.audio.rms
         u.onset = inputs.audio.onset ? 1 : 0

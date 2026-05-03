@@ -1,28 +1,21 @@
-// DepthLavaVisualizer — Candidate #1: depth becomes a flowing aurora driven by audio.
+// CathedralOfBonesVisualizer — Procedural anatomical X-ray. Skull, ribcage,
+// spine, pelvis, femurs all rendered as SDF distance lines, region-selected by
+// vertical position within the body silhouette. Heart pulses with bass; nerve
+// filaments flicker on treble; full-frame strobe on onset. Wet-plate collodion
+// palette.  Inspiration: Andreas Vesalius's *De humani corporis fabrica*, Daito
+// Manabe's *Pulse*, X-ray photography.
 
 import Metal
 import MetalKit
-import simd
-
-struct DepthLavaUniforms {
-    var time: Float = 0
-    var rms: Float = 0
-    var onset: Float = 0
-    var aspect: Float = 1
-    var bands: (Float, Float, Float, Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0, 0, 0, 0)
-    var nearMM: Float = 500
-    var farMM: Float = 4000
-    var pad0: Float = 0
-}
 
 @MainActor
-final class DepthLavaVisualizer: Visualizer {
+final class CathedralOfBonesVisualizer: Visualizer {
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = library.makeFunction(name: "passthrough_vs")
-        desc.fragmentFunction = library.makeFunction(name: "depth_lava_fs")
+        desc.fragmentFunction = library.makeFunction(name: "cathedral_bones_fs")
         desc.colorAttachments[0].pixelFormat = colorPixelFormat
         desc.depthAttachmentPixelFormat = .depth32Float
         guard let pso = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }

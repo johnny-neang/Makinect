@@ -43,7 +43,7 @@ struct ContentView: View {
 
     private var placeholderView: some View {
         VStack(spacing: 12) {
-            Image(systemName: manager.isConnected ? "camera" : "camera.fill")
+            Image(systemName: placeholderIcon)
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
 
@@ -51,11 +51,28 @@ struct ContentView: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
 
-            if !manager.isConnected {
-                Text("Connect a Kinect sensor and press Connect")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-            }
+            Text(placeholderHint)
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    private var placeholderIcon: String {
+        switch manager.source {
+        case .synthetic: return "waveform.circle"
+        case .kinect:    return manager.isConnected ? "camera" : "camera.fill"
+        }
+    }
+
+    private var placeholderHint: String {
+        switch manager.source {
+        case .synthetic:
+            return "Pick a visualization to begin — audio drives the visuals."
+        case .kinect:
+            return manager.isConnected
+                ? ""
+                : "Connect a Kinect sensor and press Connect, or switch the Source to Synthetic."
         }
     }
 }

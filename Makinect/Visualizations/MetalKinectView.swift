@@ -35,6 +35,7 @@ struct MetalKinectView: NSViewRepresentable {
         let device: MTLDevice
         let library: MTLLibrary
         let textures: KinectMetalTextures
+        let synthetic: SyntheticFrameSource?
         var visualizer: Visualizer?
         var currentKind: VisualizationKind
         weak var view: MTKView?
@@ -56,6 +57,9 @@ struct MetalKinectView: NSViewRepresentable {
                 fatalError("Failed to allocate Kinect textures")
             }
             self.textures = tx
+            // Optional — if the synth kernels failed to load, synthetic mode just
+            // shows zeroed textures (visualizers still render, just blank).
+            self.synthetic = SyntheticFrameSource(device: dev, library: lib)
             super.init()
             manager.attachVisualizationTextures(textures)
             setKind(kind)
@@ -69,14 +73,27 @@ struct MetalKinectView: NSViewRepresentable {
         private func makeVisualizer(_ kind: VisualizationKind) -> Visualizer? {
             let format = view?.colorPixelFormat ?? .bgra8Unorm
             switch kind {
-            case .depthLava:        return DepthLavaVisualizer(device: device, library: library, colorPixelFormat: format)
-            case .skeletonRibbons:  return SkeletonRibbonsVisualizer(device: device, library: library, colorPixelFormat: format)
-            case .halftone:         return HalftoneVisualizer(device: device, library: library, colorPixelFormat: format)
-            case .postFX:           return PostFXVisualizer(device: device, library: library, colorPixelFormat: format)
-            case .pointCloud:       return PointCloudVisualizer(device: device, library: library, colorPixelFormat: format)
-            case .heightField:      return HeightFieldVisualizer(device: device, library: library, colorPixelFormat: format)
-            case .bodyPaint:        return BodyPaintVisualizer(device: device, library: library, colorPixelFormat: format)
-            case .shaderSandbox:    return ShaderSandboxVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .pointCloud:        return PointCloudVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .bodyPaint:         return BodyPaintVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .nebula:            return NebulaVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .opticalFlow:       return OpticalFlowVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .particleStorm:     return ParticleStormVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .stableFluids:      return StableFluidsVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .voxelSculpt:       return VoxelSculptVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .iridescentPlumage: return IridescentPlumageVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .cathedralOfBones:  return CathedralOfBonesVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .pixelStorm:        return PixelStormVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .bodyOfPetals:      return BodyOfPetalsVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .mandelbulbAviary:  return MandelbulbAviaryVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .smokeGod:          return SmokeGodVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .stainedCathedral:  return StainedCathedralVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .volumetricAurora:  return VolumetricAuroraVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .glassOcean:        return GlassOceanVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .mercuryStorm:      return MercuryStormVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .origamiBody:       return OrigamiBodyVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .spectralOcean:     return SpectralOceanVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .forestOfLight:     return ForestOfLightVisualizer(device: device, library: library, colorPixelFormat: format)
+            case .memoryPalace:      return MemoryPalaceVisualizer(device: device, library: library, colorPixelFormat: format)
             }
         }
 
@@ -86,14 +103,32 @@ struct MetalKinectView: NSViewRepresentable {
             guard let viz = visualizer,
                   let drawable = view.currentDrawable,
                   let descriptor = view.currentRenderPassDescriptor,
-                  let commandBuffer = textures.commandQueue.makeCommandBuffer(),
-                  let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+                  let commandBuffer = textures.commandQueue.makeCommandBuffer() else { return }
+
+            let timeSeconds = Float(Date().timeIntervalSince(startTime))
+
+            // In synthetic mode, fill the same MTLTextures the Kinect bridge would
+            // before the visualizer's render pass reads them. Same command buffer
+            // → Metal handles the compute→render dependency automatically.
+            if manager.source == .synthetic, let synth = synthetic {
+                synth.encode(
+                    into: commandBuffer,
+                    textures: textures,
+                    audio: manager.audio,
+                    timeSeconds: timeSeconds
+                )
+            }
+
+            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+                commandBuffer.commit()
+                return
+            }
 
             let inputs = VisualizerInputs(
                 textures: textures,
                 audio: manager.audio,
                 skeletons: manager.poseDetector.skeletons,
-                timeSeconds: Float(Date().timeIntervalSince(startTime)),
+                timeSeconds: timeSeconds,
                 segmentationNearMM: manager.segmentationNearMM,
                 segmentationFarMM: manager.segmentationFarMM
             )
