@@ -13,6 +13,9 @@ import AppKit
 enum CameraMode: String, CaseIterable {
     case rgb = "RGB Camera"
     case depth = "Depth Sensor"
+    case ir = "IR Sensor"
+    case skeleton = "Skeleton"
+    case segmented = "Segmented"
 }
 
 /// Describes a detected Kinect device
@@ -31,6 +34,9 @@ private let kV2ColorBufferSize = 1920 * 1080 * 4  // BGRX
 private let kV2DepthWidth = 512
 private let kV2DepthHeight = 424
 private let kV2DepthPixelCount = 512 * 424
+private let kV2BigDepthWidth = 1920
+private let kV2BigDepthHeight = 1082  // libfreenect2 adds 1 blank row top and bottom
+private let kV2BigDepthPixelCount = 1920 * 1082
 
 // MARK: - V1 Frame Constants
 
@@ -76,6 +82,22 @@ final class KinectManager {
     var serialNumber: String?
     var firmwareVersion: String?
 
+    // Pose detection
+    let poseDetector = PoseDetector()
+    var showSkeleton = false
+
+    // Segmentation parameters
+    var segmentationNearMM: Float = 500
+    var segmentationFarMM: Float = 2000
+
+    // FPS tracking
+    var currentFPS: Double = 0.0
+    private var frameCount = 0
+    private var fpsTimestamp = Date()
+
+    // Latest CGImage for Vision framework (avoids NSImage roundtrip)
+    var latestColorCGImage: CGImage?
+
     // V2 bridge
     private var v2Bridge: KinectV2Bridge?
 
@@ -90,6 +112,8 @@ final class KinectManager {
     // V2 frame buffers (read on main thread)
     private var v2ColorBuffer = [UInt8](repeating: 0, count: kV2ColorBufferSize)
     private var v2DepthBuffer = [Float](repeating: 0, count: kV2DepthPixelCount)
+    private var v2IRBuffer = [Float](repeating: 0, count: kV2DepthPixelCount)
+    private var v2RegisteredDepthBuffer = [Float](repeating: 0, count: kV2BigDepthPixelCount)
 
     init() {
         scanForDevices()
@@ -135,7 +159,6 @@ final class KinectManager {
     func connect() {
         guard !isConnected else { return }
 
-        // Prefer v2 if detected, fallback to v1
         let hasV2 = detectedDevices.contains { $0.version == .kinectV2 }
         let hasV1 = detectedDevices.contains { $0.version == .kinectV1 }
 
@@ -164,8 +187,11 @@ final class KinectManager {
         isConnected = false
         activeVersion = .none
         currentFrame = nil
+        latestColorCGImage = nil
         serialNumber = nil
         firmwareVersion = nil
+        currentFPS = 0
+        poseDetector.skeletons = []
         statusMessage = "Disconnected"
     }
 
@@ -213,20 +239,68 @@ final class KinectManager {
     private func updateV2Frame() {
         guard let bridge = v2Bridge else { return }
 
-        if cameraMode == .rgb {
-            let gotFrame = v2ColorBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
-                bridge.copyColorFrame(buf.baseAddress!)
+        // FPS tracking
+        frameCount += 1
+        let elapsed = Date().timeIntervalSince(fpsTimestamp)
+        if elapsed >= 1.0 {
+            currentFPS = Double(frameCount) / elapsed
+            frameCount = 0
+            fpsTimestamp = Date()
+        }
+
+        // Always fetch color frame (needed for skeleton/segmentation overlays)
+        let gotColor = v2ColorBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
+            bridge.copyColorFrame(buf.baseAddress!)
+        }
+        if gotColor {
+            latestColorCGImage = Self.createV2ColorCGImage(from: v2ColorBuffer)
+        }
+
+        switch cameraMode {
+        case .rgb:
+            if gotColor, let cg = latestColorCGImage {
+                currentFrame = NSImage(cgImage: cg, size: NSSize(width: kV2ColorWidth, height: kV2ColorHeight))
             }
-            if gotFrame {
-                currentFrame = Self.createV2ColorImage(from: v2ColorBuffer)
-            }
-        } else {
-            let gotFrame = v2DepthBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
+
+        case .depth:
+            let gotDepth = v2DepthBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
                 bridge.copyDepthFrame(buf.baseAddress!)
             }
-            if gotFrame {
+            if gotDepth {
                 currentFrame = Self.createV2DepthImage(from: v2DepthBuffer)
             }
+
+        case .ir:
+            let gotIR = v2IRBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
+                bridge.copyIRFrame(buf.baseAddress!)
+            }
+            if gotIR {
+                currentFrame = Self.createV2IRImage(from: v2IRBuffer)
+            }
+
+        case .skeleton:
+            if gotColor, let cg = latestColorCGImage {
+                currentFrame = NSImage(cgImage: cg, size: NSSize(width: kV2ColorWidth, height: kV2ColorHeight))
+            }
+
+        case .segmented:
+            let gotRegDepth = v2RegisteredDepthBuffer.withUnsafeMutableBufferPointer { buf -> Bool in
+                bridge.copyRegisteredDepthFrame(buf.baseAddress!)
+            }
+            if gotColor || gotRegDepth {
+                currentFrame = Self.createSegmentedImage(
+                    colorBGRX: v2ColorBuffer,
+                    registeredDepth: v2RegisteredDepthBuffer,
+                    nearMM: segmentationNearMM,
+                    farMM: segmentationFarMM
+                )
+            }
+        }
+
+        // Run pose detection when skeleton mode is active or overlay is on
+        if (cameraMode == .skeleton || (cameraMode == .rgb && showSkeleton)),
+           let cg = latestColorCGImage {
+            poseDetector.detectPose(in: cg)
         }
     }
 
@@ -305,6 +379,15 @@ final class KinectManager {
     }
 
     private func updateV1Frame() {
+        // FPS tracking
+        frameCount += 1
+        let elapsed = Date().timeIntervalSince(fpsTimestamp)
+        if elapsed >= 1.0 {
+            currentFPS = Double(frameCount) / elapsed
+            frameCount = 0
+            fpsTimestamp = Date()
+        }
+
         gV1Lock.lock()
         if cameraMode == .rgb && gV1HasNewRGB {
             let copy = gV1RGBBuffer
@@ -321,21 +404,20 @@ final class KinectManager {
         }
     }
 
-    // MARK: - V2 Image Conversion
+    // MARK: - V2 Image Conversion (CGImage-based)
 
-    /// Convert BGRX (1920x1080) to displayable NSImage
-    private static func createV2ColorImage(from bgrxBuffer: [UInt8]) -> NSImage? {
-        // Convert BGRX → RGB
+    /// Convert BGRX (1920x1080) to CGImage
+    private static func createV2ColorCGImage(from bgrxBuffer: [UInt8]) -> CGImage? {
         var rgb = [UInt8](repeating: 0, count: kV2ColorWidth * kV2ColorHeight * 3)
         for i in 0..<(kV2ColorWidth * kV2ColorHeight) {
-            rgb[i * 3]     = bgrxBuffer[i * 4 + 2] // R (from offset 2 in BGRX)
+            rgb[i * 3]     = bgrxBuffer[i * 4 + 2] // R
             rgb[i * 3 + 1] = bgrxBuffer[i * 4 + 1] // G
             rgb[i * 3 + 2] = bgrxBuffer[i * 4]     // B
         }
 
         let data = Data(rgb)
         guard let provider = CGDataProvider(data: data as CFData) else { return nil }
-        guard let cgImage = CGImage(
+        return CGImage(
             width: kV2ColorWidth, height: kV2ColorHeight,
             bitsPerComponent: 8, bitsPerPixel: 24,
             bytesPerRow: kV2ColorWidth * 3,
@@ -343,9 +425,7 @@ final class KinectManager {
             bitmapInfo: CGBitmapInfo(rawValue: 0),
             provider: provider, decode: nil,
             shouldInterpolate: true, intent: .defaultIntent
-        ) else { return nil }
-
-        return NSImage(cgImage: cgImage, size: NSSize(width: kV2ColorWidth, height: kV2ColorHeight))
+        )
     }
 
     /// Convert float depth (mm, 512x424) to rainbow-colored NSImage
@@ -375,6 +455,81 @@ final class KinectManager {
         return NSImage(cgImage: cgImage, size: NSSize(width: kV2DepthWidth, height: kV2DepthHeight))
     }
 
+    /// Convert float IR (512x424) to grayscale NSImage with sqrt scaling
+    private static func createV2IRImage(from irBuffer: [Float]) -> NSImage? {
+        var rgb = [UInt8](repeating: 0, count: kV2DepthWidth * kV2DepthHeight * 3)
+        let sqrtMax = sqrtf(65535.0)
+
+        for i in 0..<kV2DepthPixelCount {
+            let raw = irBuffer[i]
+            let normalized = min(max(sqrtf(raw) / sqrtMax, 0), 1)
+            let val = UInt8(normalized * 255)
+            rgb[i * 3]     = val
+            rgb[i * 3 + 1] = val
+            rgb[i * 3 + 2] = val
+        }
+
+        let data = Data(rgb)
+        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+        guard let cgImage = CGImage(
+            width: kV2DepthWidth, height: kV2DepthHeight,
+            bitsPerComponent: 8, bitsPerPixel: 24,
+            bytesPerRow: kV2DepthWidth * 3,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: 0),
+            provider: provider, decode: nil,
+            shouldInterpolate: true, intent: .defaultIntent
+        ) else { return nil }
+
+        return NSImage(cgImage: cgImage, size: NSSize(width: kV2DepthWidth, height: kV2DepthHeight))
+    }
+
+    /// Combine color + registered depth to produce background-removed image
+    private static func createSegmentedImage(
+        colorBGRX: [UInt8],
+        registeredDepth: [Float],
+        nearMM: Float,
+        farMM: Float
+    ) -> NSImage? {
+        let width = kV2ColorWidth
+        let height = kV2ColorHeight
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let colorIdx = y * width + x
+                // registeredDepth is 1920x1082 — skip row 0 (blank top row)
+                let depthIdx = (y + 1) * kV2BigDepthWidth + x
+
+                let depthMM = registeredDepth[depthIdx]
+                let inRange = depthMM > nearMM && depthMM < farMM && depthMM > 0 && !depthMM.isNaN
+
+                let outIdx = colorIdx * 4
+                if inRange {
+                    rgba[outIdx]     = colorBGRX[colorIdx * 4 + 2] // R
+                    rgba[outIdx + 1] = colorBGRX[colorIdx * 4 + 1] // G
+                    rgba[outIdx + 2] = colorBGRX[colorIdx * 4]     // B
+                    rgba[outIdx + 3] = 255
+                }
+                // else: stays 0,0,0,0 (transparent/black)
+            }
+        }
+
+        let data = Data(rgba)
+        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+        guard let cgImage = CGImage(
+            width: width, height: height,
+            bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider, decode: nil,
+            shouldInterpolate: true, intent: .defaultIntent
+        ) else { return nil }
+
+        return NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
+    }
+
     /// Map depth in millimeters to rainbow color. Range: 500mm–4500mm.
     private static func depthMMToColor(_ mm: Float) -> (UInt8, UInt8, UInt8) {
         if mm <= 0 || mm.isNaN || mm.isInfinite { return (0, 0, 0) }
@@ -384,7 +539,6 @@ final class KinectManager {
         let clamped = min(max(mm, minDepth), maxDepth)
         let t = (clamped - minDepth) / (maxDepth - minDepth)
 
-        // Hue 0–240: red (close) → blue (far)
         let hue = t * 240.0
         let sector = hue / 60.0
         let idx = Int(sector)
