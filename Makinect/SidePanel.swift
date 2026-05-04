@@ -181,6 +181,12 @@ struct SidePanel: View {
             }
         }
 
+        // Phase B — full DSP audio monitor: waveform / FFT bars / spectrogram /
+        // pitch / chord / key / BPM / RMS+peak+LUFS / onset LED.
+        GroupBox("Audio Monitor") {
+            AudioMonitorView(audio: manager.audio)
+        }
+
         if manager.visualization == .pointCloud || manager.visualization == .voxelSculpt {
             GroupBox("Camera") {
                 Text("Drag to orbit · Pinch / scroll to zoom")
