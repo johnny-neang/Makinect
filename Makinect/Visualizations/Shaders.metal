@@ -2570,52 +2570,75 @@ inline float3 psw_fib_sphere(float i, float n) {
     return float3(cos(th) * r, y, sin(th) * r);
 }
 
-inline float3 psw_torus(float i, float n, float tWraps, float tw, float t) {
-    float u = (i / n) * tWraps * 6.2831853;
-    float v = (i / n) * 41.0 * 6.2831853 + t * 0.6;
-    float R = 0.70 + tw * 0.10;
-    float r = 0.22 + tw * 0.08;
+inline float3 psw_torus(float i, float n, float bass, float treb, float t) {
+    // 2D-grid distribution over a torus surface — gives a dense surface, not a string.
+    // ~200 longitudinal × (n/200) latitudinal samples.
+    float N = 200.0;
+    float M = max(1.0, floor(n / N));
+    float ui = fmod(i, N) / N;
+    float vi = floor(i / N) / M;
+    float u = ui * 6.2831853;
+    float v = vi * 6.2831853 + t * 0.30;
+    float R = 0.70 + bass * 0.10;
+    float r = 0.22 + treb * 0.04;
     return float3((R + r * cos(v)) * cos(u),
-                  r * sin(v),
+                   r * sin(v),
                   (R + r * cos(v)) * sin(u));
 }
 
-inline float3 psw_helix(float i, float n, float t) {
-    // Double helix — odd/even index split into two strands.
+inline float3 psw_helix(float i, float n, float t, float bass, float treb) {
+    // Double helix — odd/even index split into two strands. ~7 turns over height 1.8.
     float strand = (fmod(i, 2.0) < 1.0) ? 1.0 : -1.0;
-    float u = (i / n - 0.5) * 12.0 * 3.14159 + t * 0.3;
-    float r = 0.42;
-    float y = (i / n - 0.5) * 1.6;
+    float u = (i / n - 0.5) * 14.0 * 3.14159 + t * 0.25;
+    float r = 0.40 + bass * 0.08;
+    float pitch = 1.8 - treb * 0.30;
+    float y = (i / n - 0.5) * pitch;
     float ang = strand > 0 ? u : (u + 3.14159);
     return float3(cos(ang) * r, y, sin(ang) * r);
 }
 
 inline float3 psw_cube_lattice(float i, float n) {
+    // Hollow-cube shell — only render face cells, leave interior empty so the
+    // lattice reads as a cube rather than a solid block of points.
     int N = int(round(pow(n, 1.0/3.0)));
     int idx = int(i);
     int x = idx % N;
     int y = (idx / N) % N;
     int z = (idx / (N * N)) % N;
-    return (float3(float(x), float(y), float(z)) / max(1.0, float(N - 1)) - 0.5) * 1.4;
+    int Nm = N - 1;
+    bool onShell = (x == 0 || x == Nm || y == 0 || y == Nm || z == 0 || z == Nm);
+    float3 p = (float3(float(x), float(y), float(z)) / max(1.0, float(Nm)) - 0.5) * 1.4;
+    // Push interior cells onto the nearest face — deterministic packing.
+    if (!onShell) {
+        // Shift to back face (z=0) deterministically.
+        p.z = -0.7;
+    }
+    return p;
 }
 
 inline float3 psw_lissajous(float i, float n, float t) {
-    // Lissajous knot — three-frequency curve in 3D.
+    // 3D Lissajous knot — three coprime frequencies (3,2,5) → closed curve.
     float s = i / n * 6.2831853;
     float a = 3.0, b = 2.0, c = 5.0;
-    float ph = t * 0.3;
-    return float3(sin(a * s + ph) * 0.65,
-                  sin(b * s + ph * 1.3) * 0.65,
-                  sin(c * s + ph * 0.7) * 0.65);
+    float ph = t * 0.30;
+    return float3(sin(a * s + ph)        * 0.65,
+                  sin(b * s + ph * 1.3)  * 0.65,
+                  sin(c * s + ph * 0.7)  * 0.65);
 }
 
 inline float3 psw_attractor(float i, float n, float t, float bass) {
-    // Audio-warped strange-attractor approximation.
-    float s = (i / n) * 6.2831853 * 8.0;
-    float r = 0.5 + sin(s * 0.13 + t * 0.4) * 0.25;
-    float ang = s * 1.7 + t * (0.5 + bass * 0.8);
-    float y = sin(s * 0.7 + t * 0.3) * (0.5 + bass * 0.3);
-    return float3(cos(ang) * r, y, sin(ang) * r);
+    // Aizawa-style strange attractor — each particle samples a stable orbit by
+    // (i, t). Bass twists the whole orbit so the attractor breathes with kicks.
+    float s = (i / n) * 30.0 + t * 0.05;
+    float x = sin(s) * (0.6 + 0.2 * cos(s * 0.7));
+    float y = cos(s * 1.7) * (0.5 + 0.1 * sin(s * 0.3));
+    float z = sin(s * 0.7) * 0.55 + cos(s * 1.1) * 0.15;
+    // Bass twist around Y axis.
+    float a = bass * 0.4;
+    float ca = cos(a), sa = sin(a);
+    float xr = x * ca - z * sa;
+    float zr = x * sa + z * ca;
+    return float3(xr, y, zr);
 }
 
 kernel void psw_step_kernel(
@@ -2640,16 +2663,16 @@ kernel void psw_step_kernel(
     float3 pA, pB;
     {
         if      (modeA == 0) pA = psw_fib_sphere(i, n);
-        else if (modeA == 1) pA = psw_torus(i, n, 8.0, bass, t);
-        else if (modeA == 2) pA = psw_helix(i, n, t);
+        else if (modeA == 1) pA = psw_torus(i, n, bass, treb, t);
+        else if (modeA == 2) pA = psw_helix(i, n, t, bass, treb);
         else if (modeA == 3) pA = psw_cube_lattice(i, n);
         else if (modeA == 4) pA = psw_lissajous(i, n, t);
         else                 pA = psw_attractor(i, n, t, bass);
     }
     {
         if      (modeB == 0) pB = psw_fib_sphere(i, n);
-        else if (modeB == 1) pB = psw_torus(i, n, 8.0, bass, t);
-        else if (modeB == 2) pB = psw_helix(i, n, t);
+        else if (modeB == 1) pB = psw_torus(i, n, bass, treb, t);
+        else if (modeB == 2) pB = psw_helix(i, n, t, bass, treb);
         else if (modeB == 3) pB = psw_cube_lattice(i, n);
         else if (modeB == 4) pB = psw_lissajous(i, n, t);
         else                 pB = psw_attractor(i, n, t, bass);
@@ -2665,21 +2688,14 @@ kernel void psw_step_kernel(
     float3 jitter = float3(sin(jSeed * 31.0), sin(jSeed * 53.0), sin(jSeed * 71.0));
     pos += jitter * (0.005 + treb * 0.020);
 
-    // Body attractor — drift swarm center toward the body's COM (when present).
-    if (u.bodyAttract.w > 0.001) {
-        pos += u.bodyAttract.xyz * u.bodyAttract.w;
-    }
+    // Body attractor — translate the swarm toward the body's COM (when present).
+    pos += u.bodyAttract.xyz * u.bodyAttract.w;
 
-    // Slow Y-axis rotation for auto-orbit.
-    float rotAng = t * 0.20 + u.audio.x * 0.5;
-    float ca = cos(rotAng);
-    float sa = sin(rotAng);
-    float rx = pos.x * ca + pos.z * sa;
-    float rz = -pos.x * sa + pos.z * ca;
-    pos.x = rx;
-    pos.z = rz;
+    // NOTE: in-kernel Y-axis rotation removed — the camera handles auto-orbit
+    // (see ParametricSwarmVisualizer makeViewProj). Rotating points here would
+    // double-rotate them and slide the body-attract centre off the screen.
 
-    // Onset shockwave — outward push.
+    // Onset shockwave — single-frame outward push.
     if (u.audio.y > 0.5) {
         pos += normalize(pos + 0.0001) * 0.06;
     }
@@ -2701,48 +2717,41 @@ vertex PSWVertexOut psw_vs(
 ) {
     PSWParticle p = particles[vid];
     PSWVertexOut o;
-    o.position = u.viewProj * float4(p.posPad.xyz, 1.0);
+    float4 cp = u.viewProj * float4(p.posPad.xyz, 1.0);
+    o.position = cp;
 
-    float baseSize = u.ctrl.w;
+    // Depth-cued point size: closer = larger (cp.w grows with distance).
+    float depthFactor = 1.0 / max(0.5, cp.w);
+    float baseSize = u.ctrl.w * depthFactor;
     float pump = u.audio.x * 4.0 + u.audio.y * 6.0;
-    o.pointSize = clamp(baseSize + pump, 1.0, 16.0);
+    o.pointSize = clamp(baseSize + pump, 1.5, 12.0);
 
-    // Color: hue varies subtly across index (Casberry default = neon green),
-    // drifts with bass into cyan/magenta on heavy beats.
+    // Tight green-centred palette (default baseHue=0.33, spread=0.04).
+    // Bass drifts toward cyan, treble toward yellow — never fully scrambles.
     float i = float(vid) / max(1.0, u.ctrl.y);
-    float baseHue = u.palette.x;
-    float spread = u.palette.y;
-    float hue = fract(baseHue + i * spread + u.audio.z * 0.18 - u.audio.w * 0.12);
-    float val = u.palette.w * (0.7 + 0.3 * sin(p.posPad.x * 4.0 + u.ctrl.x));
-    val += u.audio.x * 0.30;
-    o.color = hsv2rgb(float3(hue, u.palette.z, saturate(val)));
+    float hueShift = u.audio.z * 0.10 - u.audio.w * 0.05;
+    float hue = fract(u.palette.x + (i - 0.5) * u.palette.y + hueShift);
+    // Allow val > 1 — feeds HDR into the additive blend; the fragment's
+    // ACES tone-map compresses overdrive into bloom, not clipping.
+    float val = u.palette.w + u.audio.x * 0.40 + u.audio.y * 0.60;
+    o.color = hsv2rgb(float3(hue, u.palette.z, val));
     o.intensity = 1.0;
     return o;
 }
 
 fragment float4 psw_fs(PSWVertexOut in [[stage_in]], float2 pc [[point_coord]]) {
-    // Plasma-glow Gaussian dot — bright core + soft halo.
+    // Discard far corners so the point sprite reads as a circle, not a square.
     float r = length(pc - 0.5) * 2.0;
-    float core = exp(-r * r * 4.0);
-    float halo = exp(-r * r * 1.2) * 0.35;
-    float a = (core + halo) * in.intensity;
-    return float4(in.color * a * 1.6, a * 0.85);
-}
-
-// Background scrim — subtle radial gradient + a hint of nebula so the swarm
-// floats in something rather than pure black.
-fragment float4 psw_bg_fs(
-    PassthroughVertexOut in [[stage_in]],
-    constant Uniforms &u [[buffer(0)]]
-) {
-    float2 p = in.uv - 0.5;
-    float r = length(p);
-    float bass = u.bands[0] + u.bands[1];
-    float3 c = mix(float3(0.003, 0.006, 0.010), float3(0.010, 0.025, 0.020), in.uv.y);
-    c += float3(0.005, 0.030, 0.020) * exp(-r * 3.0) * (0.4 + bass * 0.6);
-    c += float3(0.020, 0.060, 0.040) * u.onset * 0.30;
-    c *= 0.97 + 0.03 * sin(in.uv.y * 1080.0 * 0.7);
-    return float4(c, 1.0);
+    if (r > 1.0) discard_fragment();
+    // Sharp bright core + soft outer halo. Overdrive into HDR; ACES below
+    // tone-maps the additive accumulation into a smooth bloom. (ACES inlined
+    // because aces_tonemap() is defined later in the file.)
+    float core = exp(-r * r * 6.0);
+    float halo = exp(-r * r * 1.4) * 0.45;
+    float intensity = (core + halo) * in.intensity;
+    float3 col = in.color * intensity * 1.8;
+    col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
+    return float4(col, intensity * 0.9);
 }
 
 // =============================================================================
@@ -4268,51 +4277,7 @@ fragment float4 impasto_painter_fs(
 }
 
 
-// MARK: - #56 Parametric Swarm
-//
-// Casberry-inspired parametric swarm — points trace Lissajous-like curves
-// whose parameters are continuously remapped from FFT bands. Body presence
-// nudges the parametric centre.
-
-fragment float4 parametric_swarm_fs(
-    PassthroughVertexOut in [[stage_in]],
-    texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
-) {
-    constexpr sampler s(filter::linear, address::clamp_to_edge);
-    float2 uv = in.uv;
-    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 2.0;
-    float t = u.time;
-    float bass = u.bands[0] + u.bands[1];
-    float treb = u.bands[6] + u.bands[7];
-
-    // 1024 swarm members traced as point splats.
-    float3 col = float3(0.005, 0.008, 0.018);
-
-    int N = 1024;
-    for (int i = 0; i < 1024; i++) {
-        float fi = float(i) / float(N);
-        // Lissajous params modulated by FFT.
-        float fx = 3.0 + u.bands[0] * 4.0 + sin(t * 0.07 + fi * 6.28318) * 0.5;
-        float fy = 5.0 + u.bands[2] * 4.0 + cos(t * 0.05 + fi * 5.14) * 0.5;
-        float phaseShift = fi * 6.28318 + t * 0.4;
-        float2 q = float2(sin(fx * t + phaseShift), cos(fy * t + phaseShift)) * 0.85;
-
-        // Body bias.
-        float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
-        float mm = depthTex.sample(s, du).r;
-        bool inBody = mm > u.nearMM && mm < u.farMM && mm > 0;
-        if (inBody) q *= 0.85;
-
-        float r = length(p - q);
-        float blob = exp(-r * r * (140.0 - bass * 30.0));
-        if (blob < 1e-4) continue;
-        float3 hue = hsv2rgb(float3(fract(0.6 + fi * 0.5 + treb * 0.3), 0.8, 1.0));
-        col += hue * blob * (0.3 + u.rms * 0.6);
-    }
-
-    col += float3(0.4, 0.5, 0.7) * u.onset * 0.4;
-    col *= smoothstep(2.0, 0.6, length((uv - 0.5) * 1.4));
-    return float4(aces_tonemap(col), 1.0);
-}
+// (Removed: dead `parametric_swarm_fs` — replaced by the live `psw_*` compute+
+// render pipeline at the top of this file. The fragment-shader-only approach
+// could never reproduce Casberry's 3D geodesic sphere look at viable cost.)
 

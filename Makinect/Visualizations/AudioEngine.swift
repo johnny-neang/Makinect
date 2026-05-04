@@ -31,6 +31,15 @@ final class AudioEngine {
     private var lastFlux: Float = 0
     private var prevMagnitudes: [Float] = Array(repeating: 0, count: AudioEngine.fftSize / 2)
 
+    // Pre-allocated FFT scratch buffers — reused per-callback to avoid heap
+    // churn on the audio render thread (per-callback allocations were causing
+    // `IOWorkLoop: skipping cycle due to overload` in CoreAudio).
+    private var samples: [Float] = Array(repeating: 0, count: AudioEngine.fftSize)
+    private var realp: [Float]   = Array(repeating: 0, count: AudioEngine.fftSize / 2)
+    private var imagp: [Float]   = Array(repeating: 0, count: AudioEngine.fftSize / 2)
+    private var magnitudes: [Float] = Array(repeating: 0, count: AudioEngine.fftSize / 2)
+    private var newBands: [Float]   = Array(repeating: 0, count: AudioEngine.bandCount)
+
     init() {
         fftSetup = vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self)
         window = [Float](repeating: 0, count: AudioEngine.fftSize)
@@ -97,12 +106,16 @@ final class AudioEngine {
 
     func start() {
         guard !isRunning else { return }
-        if let target = selectedInputID {
-            setSystemDefaultInput(target)
+        // If a specific input is selected, route the engine's input node to it
+        // via AudioUnit property — avoids mutating the global system default
+        // (which the previous implementation did, causing the "no object with
+        // given ID 0" error when selectedInputID was 0).
+        if let target = selectedInputID, target != 0 {
+            bindEngineInput(to: target)
         }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        guard format.channelCount > 0 else { return }
+        guard format.channelCount > 0, format.sampleRate > 0 else { return }
 
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(AudioEngine.fftSize), format: format) { [weak self] buffer, _ in
@@ -113,6 +126,8 @@ final class AudioEngine {
             try engine.start()
             isRunning = true
         } catch {
+            // Roll back the tap so a retry has a clean slate.
+            input.removeTap(onBus: 0)
             isRunning = false
         }
     }
@@ -125,25 +140,36 @@ final class AudioEngine {
     }
 
     func switchInput(to id: AudioDeviceID) {
+        guard id != 0 else { return }
+        // No-op if same device already selected and running.
+        if id == selectedInputID, isRunning { return }
         selectedInputID = id
         if isRunning {
             stop()
-            start()
+            // Give CoreAudio a moment to tear down the IO thread before
+            // restarting — without this, we hit "HALB_IOThread::_Start: there
+            // already is a thread" because the previous IO thread is still
+            // winding down when start() reissues.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
+                self?.start()
+            }
         }
     }
 
-    private func setSystemDefaultInput(_ id: AudioDeviceID) {
-        var deviceID = id
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectSetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &addr, 0, nil,
-            UInt32(MemoryLayout<AudioDeviceID>.size),
-            &deviceID
+    /// Bind the AVAudioEngine's input node to a specific CoreAudio device by
+    /// setting kAudioOutputUnitProperty_CurrentDevice on the underlying audio
+    /// unit. Non-invasive (doesn't mutate system default).
+    private func bindEngineInput(to deviceID: AudioDeviceID) {
+        guard deviceID != 0 else { return }
+        guard let au = engine.inputNode.audioUnit else { return }
+        var id = deviceID
+        AudioUnitSetProperty(
+            au,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &id,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
         )
     }
 
@@ -153,7 +179,7 @@ final class AudioEngine {
         let n = AudioEngine.fftSize
         guard frameLength >= n else { return }
 
-        var samples = [Float](repeating: 0, count: n)
+        // Reuse pre-allocated `samples` (no per-callback heap allocation).
         for i in 0..<n { samples[i] = channelData[0][i] }
 
         var rmsValue: Float = 0
@@ -161,10 +187,7 @@ final class AudioEngine {
 
         vDSP_vmul(samples, 1, window, 1, &samples, 1, vDSP_Length(n))
 
-        var realp = [Float](repeating: 0, count: n / 2)
-        var imagp = [Float](repeating: 0, count: n / 2)
-        var magnitudes = [Float](repeating: 0, count: n / 2)
-
+        // Reuse pre-allocated realp/imagp/magnitudes scratch.
         realp.withUnsafeMutableBufferPointer { realPtr in
             imagp.withUnsafeMutableBufferPointer { imagPtr in
                 var split = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
@@ -183,7 +206,6 @@ final class AudioEngine {
         let nyquist = sampleRate / 2
         let minHz: Float = 80
         let maxHz = min(nyquist, 10_000)
-        var newBands = [Float](repeating: 0, count: AudioEngine.bandCount)
         for b in 0..<AudioEngine.bandCount {
             let t0 = Float(b) / Float(AudioEngine.bandCount)
             let t1 = Float(b + 1) / Float(AudioEngine.bandCount)
@@ -203,16 +225,27 @@ final class AudioEngine {
             let diff = magnitudes[k] - prevMagnitudes[k]
             if diff > 0 { flux += diff }
         }
-        prevMagnitudes = magnitudes
+        // In-place copy (no allocation): magnitudes → prevMagnitudes
+        for k in 0..<(n / 2) { prevMagnitudes[k] = magnitudes[k] }
         let onsetDetected = flux > lastFlux * 1.5 && flux > 5
         lastFlux = max(flux, lastFlux * 0.9)
 
-        let smoothBands = newBands
+        // Snapshot bands by value into a small fixed-size array (avoids capturing
+        // the mutable `newBands` storage in the async closure → eliminates
+        // potential cross-thread reads on the scratch buffer).
+        let snap = (newBands[0], newBands[1], newBands[2], newBands[3],
+                    newBands[4], newBands[5], newBands[6], newBands[7])
+
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            for i in 0..<AudioEngine.bandCount {
-                self.bands[i] = self.bands[i] * 0.6 + smoothBands[i] * 0.4
-            }
+            self.bands[0] = self.bands[0] * 0.6 + snap.0 * 0.4
+            self.bands[1] = self.bands[1] * 0.6 + snap.1 * 0.4
+            self.bands[2] = self.bands[2] * 0.6 + snap.2 * 0.4
+            self.bands[3] = self.bands[3] * 0.6 + snap.3 * 0.4
+            self.bands[4] = self.bands[4] * 0.6 + snap.4 * 0.4
+            self.bands[5] = self.bands[5] * 0.6 + snap.5 * 0.4
+            self.bands[6] = self.bands[6] * 0.6 + snap.6 * 0.4
+            self.bands[7] = self.bands[7] * 0.6 + snap.7 * 0.4
             self.rms = self.rms * 0.7 + rmsValue * 0.3
             self.onset = onsetDetected
         }
