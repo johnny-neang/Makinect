@@ -23,6 +23,8 @@ struct VisualizerInputs {
     /// the fields it needs; unused configs cost nothing.
     let parametricSwarm: ParametricSwarmConfig
     let particleStorm: ParticleStormConfig
+    let mercuryStorm: MercuryStormConfig
+    let mandelbulbAviary: MandelbulbAviaryConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

@@ -106,6 +106,8 @@ final class KinectManager {
     // visualizer each frame via VisualizerInputs.
     let parametricSwarm = ParametricSwarmConfig()
     let particleStorm = ParticleStormConfig()
+    let mercuryStorm = MercuryStormConfig()
+    let mandelbulbAviary = MandelbulbAviaryConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

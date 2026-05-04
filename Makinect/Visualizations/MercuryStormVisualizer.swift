@@ -3,12 +3,22 @@
 // Chrome reflection shading with hue rotated by surface normal direction —
 // procedural cubemap. Inspiration: T-1000, Sachiko Kodama's ferrofluid art,
 // Wim Delvoye's chrome sculptures.
+//
+// User controls (MercuryStormConfig): ball count / orbit radius / ball
+// radius / body emit / base hue / streak intensity / specular tightness /
+// onset vortex.
 
 import Metal
 import MetalKit
+import simd
 
 @MainActor
 final class MercuryStormVisualizer: Visualizer {
+    private struct Params {
+        var shape: SIMD4<Float>     // (ballCount, orbitRadius, ballRadius, bodyEmit)
+        var chrome: SIMD4<Float>    // (baseHue, streakIntensity, specularTightness, onsetVortex)
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -34,9 +44,16 @@ final class MercuryStormVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.mercuryStorm
+        var params = Params(
+            shape:  SIMD4<Float>(Float(cfg.ballCount), cfg.orbitRadius, cfg.ballRadius, cfg.bodyEmit),
+            chrome: SIMD4<Float>(cfg.baseHue, cfg.streakIntensity, cfg.specularTightness, cfg.onsetVortex)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

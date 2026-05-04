@@ -202,6 +202,124 @@ struct SidePanel: View {
         if manager.visualization == .particleStorm {
             particleStormSection
         }
+
+        if manager.visualization == .mercuryStorm {
+            mercuryStormSection
+        }
+
+        if manager.visualization == .mandelbulbAviary {
+            mandelbulbAviarySection
+        }
+    }
+
+    @ViewBuilder
+    private var mandelbulbAviarySection: some View {
+        let cfg = manager.mandelbulbAviary
+        GroupBox("Mandelbulb — Fractal") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Power", value: String(format: "%.1f", cfg.fractalPower))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).fractalPower, in: 5...12)
+
+                LabeledContent("Audio Mod", value: String(format: "%.2f", cfg.powerAudioMod))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).powerAudioMod, in: 0...3)
+
+                LabeledContent("Steps", value: "\(cfg.raymarchSteps)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.raymarchSteps) },
+                        set: { cfg.raymarchSteps = Int($0) }
+                    ),
+                    in: 30...80, step: 1
+                )
+
+                LabeledContent("Hue", value: String(format: "%.2f", cfg.fractalHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).fractalHue, in: 0...1)
+
+                LabeledContent("Cam Speed", value: String(format: "%.2f", cfg.camOrbitSpeed))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).camOrbitSpeed, in: 0...0.30)
+            }
+        }
+
+        GroupBox("Mandelbulb — Flock") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Birds", value: "\(cfg.birdCount)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.birdCount) },
+                        set: { cfg.birdCount = Int($0) }
+                    ),
+                    in: 20...120, step: 1
+                )
+
+                LabeledContent("Bird Size", value: String(format: "%.3f", cfg.birdSize))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).birdSize, in: 0.001...0.020)
+
+                LabeledContent("Body Attract", value: String(format: "%.2f", cfg.birdBodyAttract))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).birdBodyAttract, in: 0...1)
+
+                LabeledContent("Bird Hue", value: String(format: "%.2f", cfg.birdHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).birdHue, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var mercuryStormSection: some View {
+        let cfg = manager.mercuryStorm
+        GroupBox("Mercury Storm — Field") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Ball Count", value: "\(cfg.ballCount)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.ballCount) },
+                        set: { cfg.ballCount = Int($0) }
+                    ),
+                    in: 4...16, step: 1
+                )
+
+                LabeledContent("Orbit Radius", value: String(format: "%.2f", cfg.orbitRadius))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).orbitRadius, in: 0.10...0.45)
+
+                LabeledContent("Ball Radius", value: String(format: "%.3f", cfg.ballRadius))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).ballRadius, in: 0.04...0.20)
+
+                LabeledContent("Body Emit", value: String(format: "%.2f", cfg.bodyEmit))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyEmit, in: 0...3)
+            }
+        }
+
+        GroupBox("Mercury Storm — Chrome") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+
+                LabeledContent("Streak", value: String(format: "%.2f", cfg.streakIntensity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).streakIntensity, in: 0...1)
+
+                LabeledContent("Specular", value: String(format: "%.0f", cfg.specularTightness))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).specularTightness, in: 8...128)
+
+                LabeledContent("Onset Vortex", value: String(format: "%.2f", cfg.onsetVortex))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).onsetVortex, in: 0...1)
+            }
+        }
     }
 
     // — Universal Controls — six modifiers that affect every visualizer:

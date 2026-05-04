@@ -1548,10 +1548,17 @@ inline float mandelbulb_de(float3 p, float power) {
     return 0.5 * log(r) * r / dr;
 }
 
+struct MandelbulbAviaryParams {
+    float4 fractal;   // (fractalPower, powerAudioMod, raymarchSteps, fractalHue)
+    float4 flock;     // (camOrbitSpeed, birdCount, birdSize, birdBodyAttract)
+    float4 misc;      // (birdHue, _, _, _)
+};
+
 fragment float4 mandelbulb_aviary_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant MandelbulbAviaryParams &cfg [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -1563,28 +1570,36 @@ fragment float4 mandelbulb_aviary_fs(
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    // Camera orbits slowly
-    float3 ro = float3(sin(t * 0.10) * 2.5, cos(t * 0.07) * 1.5, -3.0);
+    // — User-tunable parameters
+    float fractalPowerBase = cfg.fractal.x;
+    float powerAudioMod    = cfg.fractal.y;
+    int   raymarchSteps    = clamp(int(cfg.fractal.z), 12, 80);
+    float fractalHueBase   = cfg.fractal.w;
+    float camOrbitSpeed    = cfg.flock.x;
+
+    // Camera orbits at user-controlled speed.
+    float3 ro = float3(sin(t * camOrbitSpeed) * 2.5, cos(t * camOrbitSpeed * 0.7) * 1.5, -3.0);
     float3 lookAt = float3(0, 0, 0);
     float3 fwd = normalize(lookAt - ro);
     float3 right = normalize(cross(float3(0, 1, 0), fwd));
     float3 up = cross(fwd, right);
     float3 rd = normalize(fwd + right * p.x + up * p.y);
 
-    // Mandelbulb power modulated by audio
-    float power = 8.0 + bass * 2.0 - mid * 1.0;
+    // Mandelbulb power = base + audio mod (audio scales bass effect down/up).
+    float power = fractalPowerBase + bass * powerAudioMod - mid * powerAudioMod * 0.5;
 
-    // Raymarch
+    // Raymarch — step budget user-controlled (lower = faster but blockier).
     float dist = 0.0;
     float3 hit = ro;
     bool fractalHit = false;
     int hitIters = 0;
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < 80; i++) {
+        if (i >= raymarchSteps) break;
         hit = ro + rd * dist;
         float d = mandelbulb_de(hit, power);
         if (d < 0.001) { fractalHit = true; hitIters = i; break; }
         if (dist > 10.0) break;
-        dist += d * 0.6;  // safety factor
+        dist += d * 0.6;
     }
 
     // Background: arctic blue sky with faint stars
@@ -1609,9 +1624,9 @@ fragment float4 mandelbulb_aviary_fs(
         float3 lDir = normalize(float3(0.5, 0.8, 0.6));
         float diff = saturate(dot(n, lDir)) * 0.7 + 0.30;
 
-        // Iridescent palette per iteration depth — inside fractal layers vary in hue
-        float iterT = float(hitIters) / 60.0;
-        float hue = fract(0.55 - iterT * 0.4 + bass * 0.2);
+        // Iridescent palette per iteration depth — base hue user-controlled.
+        float iterT = float(hitIters) / float(max(1, raymarchSteps));
+        float hue = fract(fractalHueBase - iterT * 0.4 + bass * 0.2);
         float3 fractalCol = hsv2rgb(float3(hue, 0.6, 1.0)) * diff;
 
         // Fresnel rim
@@ -1622,8 +1637,11 @@ fragment float4 mandelbulb_aviary_fs(
     }
 
     // — Bird flock: scatter procedural specks with vermilion trails through screen
-    int flockCount = 80;
-    for (int i = 0; i < 80; i++) {
+    int flockCount = clamp(int(cfg.flock.y), 0, 120);
+    float birdSize = cfg.flock.z;
+    float bodyAttract = cfg.flock.w;
+    float birdHue = cfg.misc.x;
+    for (int i = 0; i < 120; i++) {
         if (i >= flockCount) break;
         float fi = float(i);
         // Each bird orbits a slightly different center, time-shifted.
@@ -1631,24 +1649,27 @@ fragment float4 mandelbulb_aviary_fs(
         float orbR = 0.35 + 0.20 * sin(t * 0.4 + fi * 0.2);
         float2 birdC = float2(0.5 + cos(orbAng) * orbR * 0.6,
                               0.5 + sin(orbAng * 1.3 + fi) * orbR * 0.4);
-        // Body attractor — pull birds toward body center if depth there
+        // Body attractor — pull birds toward body center if depth there.
         float2 bDU = float2(birdC.x, (birdC.y * 1080.0 + 1.0) / 1082.0);
         float bd = depthTex.sample(s, bDU).r;
-        if (bd > u.nearMM && bd < u.farMM && bd > 0) {
-            // Drift around body
-            birdC = mix(birdC, float2(0.5), 0.2);
+        if (bd > u.nearMM && bd < u.farMM && bd > 0 && bodyAttract > 0.001) {
+            // Drift around body — strength user-controlled.
+            birdC = mix(birdC, float2(0.5), bodyAttract);
         }
 
         float birdDist = distance(uv, birdC);
-        float birdSize = 0.005 + treb * 0.003;
-        float birdMask = smoothstep(birdSize, birdSize * 0.5, birdDist);
+        // birdSize from cfg + small treble shimmer.
+        float bSize = birdSize + treb * 0.003;
+        float birdMask = smoothstep(bSize, bSize * 0.5, birdDist);
         // Trail
         float2 trailDir = float2(-sin(orbAng * 1.3 + fi), cos(orbAng * 1.3 + fi)) * 0.04;
         float trailDist = abs((uv.x - birdC.x) * trailDir.y - (uv.y - birdC.y) * trailDir.x) /
                           (length(trailDir) + 1e-4);
         float trailMask = (1.0 - smoothstep(0.0008, 0.0050, trailDist)) *
                           smoothstep(0.05, 0.0, distance(uv, birdC));
-        col += float3(0.95, 0.30, 0.20) * (birdMask + trailMask * 0.5);
+        // Bird color from user-controlled hue (default vermilion = 0.02).
+        float3 birdCol = hsv2rgb(float3(birdHue, 0.85, 1.0));
+        col += birdCol * (birdMask + trailMask * 0.5);
     }
 
     // Onset: brief flash
@@ -2073,32 +2094,43 @@ fragment float4 glass_ocean_fs(
 // Bass increases viscosity (globs cohere); treble adds shimmer; onset spawns
 // vortex bursts. Inspiration: T-1000, Ferrofluid sculptures by Sachiko Kodama.
 
+struct MercuryStormParams {
+    float4 shape;   // (ballCount, orbitRadius, ballRadius, bodyEmit)
+    float4 chrome;  // (baseHue, streakIntensity, specularTightness, onsetVortex)
+};
+
 fragment float4 mercury_storm_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant MercuryStormParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
     float2 uv = in.uv;
-    float2 p = (uv - 0.5) * float2(u.aspect, 1.0);
+    float2 p2 = (uv - 0.5) * float2(u.aspect, 1.0);
 
     float bass = u.bands[0] + u.bands[1];
     float mid = u.bands[3] + u.bands[4];
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
+    // — User-tunable parameters
+    int   ballCount      = clamp(int(p.shape.x), 1, 16);
+    float orbitRadius    = p.shape.y;
+    float ballRadiusBase = p.shape.z;
+    float bodyEmit       = p.shape.w;
+
     // — Compute metaball field
     float field = 0.0;
-    int ballCount = 8;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 16; i++) {
         if (i >= ballCount) break;
         float fi = float(i);
         float ang = t * (0.4 + fract(fi * 0.13) * 0.3) + fi * 0.785;
-        float r = 0.25 + sin(t * 0.3 + fi * 0.5) * 0.10 + bass * 0.05;
+        float r = orbitRadius + sin(t * 0.3 + fi * 0.5) * 0.10 + bass * 0.05;
         float2 ballC = float2(cos(ang), sin(ang)) * r;
-        float ballR = 0.10 + sin(t * 0.5 + fi) * 0.025 + treb * 0.012;
-        float d = distance(p, ballC);
+        float ballR = ballRadiusBase + sin(t * 0.5 + fi) * 0.025 + treb * 0.012;
+        float d = distance(p2, ballC);
         field += ballR * ballR / max(0.0001, d * d);
     }
 
@@ -2107,15 +2139,15 @@ fragment float4 mercury_storm_fs(
     float depthMM = depthTex.sample(s, depthUV).r;
     bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
     if (inBody) {
-        field += 1.5 + bass * 0.8;
+        field += bodyEmit + bass * 0.8;
     }
 
-    // Onset vortex: spawn extra ball at random position
-    if (u.onset > 0.5) {
+    // Onset vortex: spawn extra ball at random position (intensity controllable)
+    if (u.onset > 0.5 && p.chrome.w > 0.001) {
         float vAng = fract(t * 1.0) * 6.28;
         float2 vC = float2(cos(vAng), sin(vAng)) * 0.35;
-        float vDist = distance(p, vC);
-        float vR = 0.20;
+        float vDist = distance(p2, vC);
+        float vR = 0.20 * p.chrome.w;
         field += vR * vR / max(0.0001, vDist * vDist);
     }
 
@@ -2127,37 +2159,37 @@ fragment float4 mercury_storm_fs(
     float2 grad;
     {
         float fl = 0.0, fr = 0.0, fb = 0.0, ft = 0.0;
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 16; i++) {
             if (i >= ballCount) break;
             float fi = float(i);
             float ang = t * (0.4 + fract(fi * 0.13) * 0.3) + fi * 0.785;
-            float rr = 0.25 + sin(t * 0.3 + fi * 0.5) * 0.10 + bass * 0.05;
+            float rr = orbitRadius + sin(t * 0.3 + fi * 0.5) * 0.10 + bass * 0.05;
             float2 ballC = float2(cos(ang), sin(ang)) * rr;
-            float ballR = 0.10 + sin(t * 0.5 + fi) * 0.025 + treb * 0.012;
-            fl += ballR * ballR / max(0.0001, dot(p - float2(0.005, 0) - ballC, p - float2(0.005, 0) - ballC));
-            fr += ballR * ballR / max(0.0001, dot(p + float2(0.005, 0) - ballC, p + float2(0.005, 0) - ballC));
-            fb += ballR * ballR / max(0.0001, dot(p - float2(0, 0.005) - ballC, p - float2(0, 0.005) - ballC));
-            ft += ballR * ballR / max(0.0001, dot(p + float2(0, 0.005) - ballC, p + float2(0, 0.005) - ballC));
+            float ballR = ballRadiusBase + sin(t * 0.5 + fi) * 0.025 + treb * 0.012;
+            fl += ballR * ballR / max(0.0001, dot(p2 - float2(0.005, 0) - ballC, p2 - float2(0.005, 0) - ballC));
+            fr += ballR * ballR / max(0.0001, dot(p2 + float2(0.005, 0) - ballC, p2 + float2(0.005, 0) - ballC));
+            fb += ballR * ballR / max(0.0001, dot(p2 - float2(0, 0.005) - ballC, p2 - float2(0, 0.005) - ballC));
+            ft += ballR * ballR / max(0.0001, dot(p2 + float2(0, 0.005) - ballC, p2 + float2(0, 0.005) - ballC));
         }
         grad = float2(fr - fl, ft - fb);
     }
     float3 normal = normalize(float3(grad, 1.0));
 
-    // Procedural cubemap: hue varies with reflection direction
+    // Procedural cubemap: hue varies with reflection direction (base hue user-controlled).
     float reflAng = atan2(normal.y, normal.x);
     float reflMag = length(normal.xy);
-    float hue = fract(0.55 + reflAng * 0.159154943 + bass * 0.10);
+    float hue = fract(p.chrome.x + reflAng * 0.159154943 + bass * 0.10);
     float3 chromeBase = hsv2rgb(float3(hue, 0.4, 1.0));
 
-    // Anisotropic streak (rotation-aligned)
+    // Anisotropic streak (rotation-aligned) — intensity user-controlled.
     float streakAng = atan2(grad.y, grad.x) * 4.0 + t * 2.0;
     float streak = pow(saturate(sin(streakAng) * 0.5 + 0.5), 8.0);
-    chromeBase += float3(0.95, 0.92, 0.85) * streak * 0.4;
+    chromeBase += float3(0.95, 0.92, 0.85) * streak * p.chrome.y;
 
-    // Specular hot dot
+    // Specular hot dot — tightness user-controlled (8 = soft, 128 = pinpoint).
     float3 light = normalize(float3(0.3, 0.6, 0.7));
     float3 halfV = normalize(light + float3(0, 0, 1));
-    float spec = pow(saturate(dot(normal, halfV)), 64.0) * 1.5;
+    float spec = pow(saturate(dot(normal, halfV)), p.chrome.z) * 1.5;
 
     // — Background
     float3 bg = mix(float3(0.005, 0.008, 0.020), float3(0.025, 0.012, 0.035), uv.y);
