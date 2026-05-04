@@ -105,6 +105,7 @@ final class KinectManager {
     // Per-visualizer user controls, exposed in SidePanel and read by the
     // visualizer each frame via VisualizerInputs.
     let parametricSwarm = ParametricSwarmConfig()
+    let particleStorm = ParticleStormConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

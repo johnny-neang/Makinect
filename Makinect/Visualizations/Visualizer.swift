@@ -22,6 +22,7 @@ struct VisualizerInputs {
     /// Per-visualizer user-controllable settings. Each visualizer reads only
     /// the fields it needs; unused configs cost nothing.
     let parametricSwarm: ParametricSwarmConfig
+    let particleStorm: ParticleStormConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

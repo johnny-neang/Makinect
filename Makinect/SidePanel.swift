@@ -198,6 +198,10 @@ struct SidePanel: View {
         if manager.visualization == .parametricSwarm {
             parametricSwarmSection
         }
+
+        if manager.visualization == .particleStorm {
+            particleStormSection
+        }
     }
 
     // — Universal Controls — six modifiers that affect every visualizer:
@@ -249,6 +253,87 @@ struct SidePanel: View {
                 }
                 .controlSize(.small)
                 .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    // — Particle Storm controls — 256k curl-noise advected particles. Knobs
+    //   cover density, motion field, body coupling, and color palette.
+    @ViewBuilder
+    private var particleStormSection: some View {
+        let cfg = manager.particleStorm
+
+        GroupBox("Particle Storm — Density") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Particles", value: "\(cfg.particleCount / 1000)k")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.particleCount) },
+                        set: { cfg.particleCount = Int($0) }
+                    ),
+                    in: 1024...262144, step: 4096
+                )
+
+                LabeledContent("Point Size", value: String(format: "%.1f", cfg.pointSizeBase))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).pointSizeBase, in: 0.5...6.0)
+
+                LabeledContent("Speed→Size", value: String(format: "%.1f", cfg.speedToSize))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).speedToSize, in: 0...30)
+            }
+        }
+
+        GroupBox("Particle Storm — Motion") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Curl Scale", value: String(format: "%.2f", cfg.curlScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).curlScale, in: 0.3...3.0)
+
+                LabeledContent("Accel Gain", value: String(format: "%.2f", cfg.accelGain))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).accelGain, in: 0...3)
+
+                LabeledContent("Damping", value: String(format: "%.3f", cfg.damping))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).damping, in: 0.85...0.99)
+
+                LabeledContent("Jitter", value: String(format: "%.2f", cfg.jitterAmount))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).jitterAmount, in: 0...1)
+
+                LabeledContent("Recycle Age", value: String(format: "%.0f", cfg.recycleAge))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).recycleAge, in: 100...600)
+            }
+        }
+
+        GroupBox("Particle Storm — Body & Beats") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Body Pull", value: String(format: "%.2f", cfg.bodyPull))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyPull, in: 0...3)
+
+                LabeledContent("Onset Burst", value: String(format: "%.2f", cfg.onsetBurst))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).onsetBurst, in: 0...5)
+            }
+        }
+
+        GroupBox("Particle Storm — Color") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+
+                LabeledContent("Spread", value: String(format: "%.2f", cfg.hueSpread))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueSpread, in: 0...1)
+
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
             }
         }
     }

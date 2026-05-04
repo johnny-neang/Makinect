@@ -587,6 +587,10 @@ struct PSUniforms {
     float4 audio;    // (rms, onset, bassLow, treb)
     float4 bandsLow;
     float4 bandsHi;
+    // — Bespoke user controls (ParticleStormConfig)
+    float4 motion;   // (curlScale, accelGain, damping, bodyPull)
+    float4 burst;    // (onsetBurst, recycleAge, baseHue, hueSpread)
+    float4 paint;    // (pointSizeBase, speedToSize, jitterAmount, saturation)
 };
 
 struct PSParticle {
@@ -640,13 +644,29 @@ kernel void ps_step_kernel(
     float life = s.posLife.w;
     float age = s.velAge.w + 1.0;
 
-    // Curl noise with audio-driven scale.
-    float scale = 0.5 + u.audio.z * 1.5;
-    float3 acc = curl_noise(float3(s.posLife.xy * scale, t * 0.3)) * (0.7 + u.audio.x * 1.5);
+    // — User-tunable parameters (read from PSUniforms.motion / .burst / .paint)
+    float curlScale       = u.motion.x;
+    float accelGain       = u.motion.y;
+    float damping         = u.motion.z;
+    float bodyPull        = u.motion.w;
+    float onsetBurst      = u.burst.x;
+    float recycleAgeLimit = u.burst.y;
+    float jitterAmt       = u.paint.z;
 
-    // Body attractor: sample depth at this NDC; if in range, pull particle inward.
+    // Curl noise — bass still modulates spatial frequency (drift) and audio
+    // RMS still amplifies the force, but absolute scale is now user-controlled.
+    float scale = curlScale * (0.5 + u.audio.z * 1.5);
+    float3 acc = curl_noise(float3(s.posLife.xy * scale, t * 0.3)) * accelGain * (0.7 + u.audio.x * 1.5);
+
+    // Treble jitter — adds high-frequency randomness to acceleration.
+    if (jitterAmt > 0.001) {
+        float jSeed = float(gid) * 0.000037 + t * 0.5;
+        acc.xy += float2(sin(jSeed * 31.0), sin(jSeed * 53.0)) * jitterAmt * u.audio.w * 0.6;
+    }
+
+    // Body attractor: pull strength is now user-tunable (and zero disables it).
     float2 uv = float2(s.posLife.x * 0.5 + 0.5, 0.5 - s.posLife.y * 0.5);
-    if (uv.x > 0 && uv.x < 1 && uv.y > 0 && uv.y < 1) {
+    if (bodyPull > 0.001 && uv.x > 0 && uv.x < 1 && uv.y > 0 && uv.y < 1) {
         constexpr sampler ss(filter::linear, address::clamp_to_edge);
         float2 depthUV = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
         float depthMM = depthTex.sample(ss, depthUV).r;
@@ -654,23 +674,24 @@ kernel void ps_step_kernel(
         if (inBody) {
             float2 toCenter = (float2(0.0, 0.0) - s.posLife.xy);
             float r = length(toCenter) + 1e-3;
-            float pull = (u.audio.y > 0.5) ? -2.0 : 1.2;  // onset pushes outward
+            // Onset still flips the pull direction so the body "pushes off" on beats.
+            float pull = (u.audio.y > 0.5) ? -bodyPull * 1.7 : bodyPull * 1.0;
             acc.xy += toCenter / r * pull * 0.4;
         }
     }
 
-    // Beat shockwave: outward burst on onset.
-    if (u.audio.y > 0.5) {
-        float2 outv = normalize(s.posLife.xy + 0.001) * 2.0;
+    // Beat shockwave: outward burst, magnitude user-tunable.
+    if (u.audio.y > 0.5 && onsetBurst > 0.001) {
+        float2 outv = normalize(s.posLife.xy + 0.001) * onsetBurst;
         acc.xy += outv;
     }
 
-    // Integrate.
-    float3 vel = s.velAge.xyz * 0.93 + acc * dt;
+    // Integrate with user-controlled damping.
+    float3 vel = s.velAge.xyz * damping + acc * dt;
     float3 pos = s.posLife.xyz + vel * dt;
 
-    // Recycle particles that drifted too far or aged out.
-    bool recycle = (length(pos.xy) > 2.5) || (age > 320.0);
+    // Recycle particles that drifted too far or aged out (age limit user-controlled).
+    bool recycle = (length(pos.xy) > 2.5) || (age > recycleAgeLimit);
     if (recycle) {
         float fi = float(gid) + t * 7.13;
         float a = ps_hash(fi) * 6.2831853;
@@ -702,12 +723,21 @@ vertex PSPointOut ps_point_vs(
     PSParticle p = src[vid];
     PSPointOut o;
     o.position = float4(p.posLife.xy, 0, 1);
+
+    // User-tunable point-sprite styling.
+    float pointSizeBase = u.paint.x;
+    float speedToSize   = u.paint.y;
+    float saturation    = u.paint.w;
+    float baseHue       = u.burst.z;
+    float hueSpread     = u.burst.w;
+
     float speed = length(p.velAge.xy);
-    o.pointSize = clamp(2.0 + speed * 8.0 + u.audio.x * 4.0, 1.0, 14.0);
+    o.pointSize = clamp(pointSizeBase + speed * speedToSize + u.audio.x * 4.0, 1.0, 18.0);
+
+    // Hue: per-particle index drift (was random in init), shifted by audio.
     float hueShift = u.audio.z * 0.2 - u.audio.w * 0.15;
-    float3 col = hsv2rgb(float3(fract(p.color.x + hueShift),
-                                 0.85,
-                                 saturate(p.color.y * 0.6)));
+    float hue = fract(baseHue + (p.color.x - 0.5) * hueSpread + hueShift);
+    float3 col = hsv2rgb(float3(hue, saturate(saturation), saturate(p.color.y * 0.6)));
     o.color = float4(col, 1.0);
     return o;
 }

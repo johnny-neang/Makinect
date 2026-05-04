@@ -13,7 +13,9 @@ import simd
 
 @MainActor
 final class ParticleStormVisualizer: Visualizer {
-    private static let particleCount = 1024 * 256  // 262k particles
+    /// Buffer ceiling — the active count comes from
+    /// `ParticleStormConfig.particleCount` and is clamped against this.
+    private static let maxParticleCount = 1024 * 256  // 262k particles
 
     private struct Particle {
         // (x, y, z, life)  — z folded out (we render in 2D), life in [0,1]
@@ -29,6 +31,10 @@ final class ParticleStormVisualizer: Visualizer {
         var audio: SIMD4<Float>    // (rms, onset, bassLow, treb)
         var bandsLow: SIMD4<Float>
         var bandsHi: SIMD4<Float>
+        // — Bespoke user controls (ParticleStormConfig)
+        var motion: SIMD4<Float>   // (curlScale, accelGain, damping, bodyPull)
+        var burst: SIMD4<Float>    // (onsetBurst, recycleAge, baseHue, hueSpread)
+        var paint: SIMD4<Float>    // (pointSizeBase, speedToSize, jitterAmount, saturation)
     }
 
     private let stepPSO: MTLComputePipelineState
@@ -58,7 +64,7 @@ final class ParticleStormVisualizer: Visualizer {
         drawDesc.colorAttachments[0].destinationAlphaBlendFactor = .one
         guard let drawPSO = try? device.makeRenderPipelineState(descriptor: drawDesc) else { return nil }
 
-        let bytes = MemoryLayout<Particle>.stride * Self.particleCount
+        let bytes = MemoryLayout<Particle>.stride * Self.maxParticleCount
         guard let a = device.makeBuffer(length: bytes, options: [.storageModePrivate]),
               let b = device.makeBuffer(length: bytes, options: [.storageModePrivate]) else { return nil }
 
@@ -73,9 +79,11 @@ final class ParticleStormVisualizer: Visualizer {
         let bands = inputs.audio.bands
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
+        let cfg = inputs.particleStorm
+        let count = max(1024, min(Self.maxParticleCount, cfg.particleCount))
 
         var u = PSUniforms(
-            ctrl: SIMD4<Float>(inputs.timeSeconds, 1.0 / 60.0, Float(Self.particleCount), 0),
+            ctrl: SIMD4<Float>(inputs.timeSeconds, 1.0 / 60.0, Float(count), 0),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
             bandsLow: SIMD4<Float>(
                 bands.indices.contains(0) ? bands[0] : 0,
@@ -88,19 +96,26 @@ final class ParticleStormVisualizer: Visualizer {
                 bands.indices.contains(5) ? bands[5] : 0,
                 bands.indices.contains(6) ? bands[6] : 0,
                 bands.indices.contains(7) ? bands[7] : 0
-            )
+            ),
+            motion: SIMD4<Float>(cfg.curlScale, cfg.accelGain, cfg.damping, cfg.bodyPull),
+            burst:  SIMD4<Float>(cfg.onsetBurst, cfg.recycleAge, cfg.baseHue, cfg.hueSpread),
+            paint:  SIMD4<Float>(cfg.pointSizeBase, cfg.speedToSize, cfg.jitterAmount, cfg.saturation)
         )
         var range = SIMD2<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM)
 
-        // Init pass on first frame.
+        // Init pass on first frame — initializes the full max-buffer once
+        // so a later particle-count slider increase doesn't reveal
+        // uninitialized memory at the new tail.
         if !initialized, let buf = inputs.textures.commandQueue.makeCommandBuffer(),
            let enc = buf.makeComputeCommandEncoder() {
+            var initU = u
+            initU.ctrl.z = Float(Self.maxParticleCount)
             enc.setComputePipelineState(initPSO)
             enc.setBuffer(bufA, offset: 0, index: 0)
-            enc.setBytes(&u, length: MemoryLayout<PSUniforms>.stride, index: 1)
+            enc.setBytes(&initU, length: MemoryLayout<PSUniforms>.stride, index: 1)
             let tw = min(initPSO.threadExecutionWidth, 64)
             let grid = MTLSize(
-                width: (Self.particleCount + tw - 1) / tw, height: 1, depth: 1
+                width: (Self.maxParticleCount + tw - 1) / tw, height: 1, depth: 1
             )
             enc.dispatchThreadgroups(grid, threadsPerThreadgroup: MTLSize(width: tw, height: 1, depth: 1))
             enc.endEncoding()
@@ -109,7 +124,7 @@ final class ParticleStormVisualizer: Visualizer {
             initialized = true
         }
 
-        // Step pass: ping-pong A → B.
+        // Step pass: ping-pong A → B (only active count).
         if let buf = inputs.textures.commandQueue.makeCommandBuffer(),
            let enc = buf.makeComputeCommandEncoder() {
             enc.setComputePipelineState(stepPSO)
@@ -120,7 +135,7 @@ final class ParticleStormVisualizer: Visualizer {
             enc.setBytes(&range, length: MemoryLayout<SIMD2<Float>>.stride, index: 3)
             let tw = min(stepPSO.threadExecutionWidth, 64)
             let grid = MTLSize(
-                width: (Self.particleCount + tw - 1) / tw, height: 1, depth: 1
+                width: (count + tw - 1) / tw, height: 1, depth: 1
             )
             enc.dispatchThreadgroups(grid, threadsPerThreadgroup: MTLSize(width: tw, height: 1, depth: 1))
             enc.endEncoding()
@@ -129,10 +144,10 @@ final class ParticleStormVisualizer: Visualizer {
             swap(&bufA, &bufB)
         }
 
-        // Render points.
+        // Render only the active particle count.
         encoder.setRenderPipelineState(drawPSO)
         encoder.setVertexBuffer(bufA, offset: 0, index: 0)
         encoder.setVertexBytes(&u, length: MemoryLayout<PSUniforms>.stride, index: 1)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: Self.particleCount)
+        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: count)
     }
 }
