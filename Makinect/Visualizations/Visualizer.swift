@@ -9,9 +9,16 @@ struct VisualizerInputs {
     let textures: KinectMetalTextures
     let audio: AudioEngine
     let skeletons: [DetectedSkeleton]
+    /// Already pre-scaled by `common.speedMul`. Visualizers can read this
+    /// directly and animations will respect the global Speed slider.
     let timeSeconds: Float
     let segmentationNearMM: Float
     let segmentationFarMM: Float
+    /// Universal modifiers (hue/sat/val/glow + audio-reactivity + speed).
+    /// `audioReactivity` and `speedMul` are already baked into `audio.bands`
+    /// and `timeSeconds` respectively; the colour modifiers are applied as
+    /// a screen-space post-process pass in MetalKinectView.
+    let common: VisualizationCommonParams
     /// Per-visualizer user-controllable settings. Each visualizer reads only
     /// the fields it needs; unused configs cost nothing.
     let parametricSwarm: ParametricSwarmConfig

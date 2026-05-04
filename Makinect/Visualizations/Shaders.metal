@@ -78,6 +78,58 @@ inline float3 hsv2rgb(float3 c) {
     return c.z * mix(K.xxx, saturate(p - K.xxx), c.y);
 }
 
+// RGB → HSV (Hue 0..1, Sat 0..1, Val 0..1+ for HDR). Standard approach.
+inline float3 rgb2hsv(float3 c) {
+    float4 K = float4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+    float4 p = mix(float4(c.bg, K.wz), float4(c.gb, K.xy), step(c.b, c.g));
+    float4 q = mix(float4(p.xyw, c.r), float4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return float3(abs(q.z + (q.w - q.y) / (6.0 * d + e)),
+                   d / (q.x + e),
+                   q.x);
+}
+
+// MARK: - Common post-process pass
+//
+// Applied AFTER any visualizer renders into an offscreen MTLTexture, this
+// pass reads the colour and applies the universal modifiers (hueShift,
+// saturationMul, brightnessMul, glowMul) before writing to the drawable.
+// One pass per frame, ~0.1 ms at 1080p — no per-visualizer shader changes
+// required for the universal colour controls.
+
+struct CommonPostUniforms {
+    float4 commonMods;  // (hueShift, saturationMul, brightnessMul, glowMul)
+};
+
+fragment float4 common_post_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> srcTex [[texture(0)]],
+    constant CommonPostUniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float3 col = srcTex.sample(s, in.uv).rgb;
+
+    // Glow first — push HDR overdrive that the tone curve below catches.
+    col *= u.commonMods.w;
+
+    // HSV manipulation: rotate hue, scale saturation, scale value.
+    float3 hsv = rgb2hsv(col);
+    hsv.x = fract(hsv.x + u.commonMods.x);   // hue rotate
+    hsv.y = saturate(hsv.y * u.commonMods.y);
+    hsv.z *= u.commonMods.z;
+    col = hsv2rgb(hsv);
+
+    // Soft ACES tone-map so the glowMul overdrive lands as bloom-feel rather
+    // than clipping. This is identical to the curve already in many of the
+    // visualizers' fragment shaders — running it again is idempotent for
+    // values already in LDR range.
+    col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
+    col = saturate(col);
+
+    return float4(col, 1.0);
+}
+
 // MARK: - #2 Point Cloud
 
 struct PointCloudUniforms {

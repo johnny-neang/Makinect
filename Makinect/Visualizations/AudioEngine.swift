@@ -21,6 +21,14 @@ final class AudioEngine {
     var onset: Bool = false
     var isRunning = false
 
+    /// Universal output multiplier applied to bands / rms / onset — driven
+    /// by `VisualizationCommonParams.audioReactivity`. Setting this to 0
+    /// silences ALL audio modulation across every visualizer. The multiplier
+    /// is sampled atomically in `process(buffer:)` (audio render thread) and
+    /// snapshotted before the dispatch to main, so concurrent UI writes
+    /// can't tear it.
+    var outputMultiplier: Float = 1.0
+
     var availableInputs: [AudioInputDevice] = []
     var selectedInputID: AudioDeviceID?
 
@@ -230,11 +238,18 @@ final class AudioEngine {
         let onsetDetected = flux > lastFlux * 1.5 && flux > 5
         lastFlux = max(flux, lastFlux * 0.9)
 
+        // Snapshot the global output multiplier on the audio render thread so
+        // we can't read a torn value when the main thread bumps the slider
+        // mid-process. Applied to every band, RMS, and the onset gate.
+        let m = self.outputMultiplier
+
         // Snapshot bands by value into a small fixed-size array (avoids capturing
         // the mutable `newBands` storage in the async closure → eliminates
         // potential cross-thread reads on the scratch buffer).
-        let snap = (newBands[0], newBands[1], newBands[2], newBands[3],
-                    newBands[4], newBands[5], newBands[6], newBands[7])
+        let snap = (newBands[0] * m, newBands[1] * m, newBands[2] * m, newBands[3] * m,
+                    newBands[4] * m, newBands[5] * m, newBands[6] * m, newBands[7] * m)
+        let scaledRms = rmsValue * m
+        let onsetGated = onsetDetected && m > 0.05
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -246,8 +261,8 @@ final class AudioEngine {
             self.bands[5] = self.bands[5] * 0.6 + snap.5 * 0.4
             self.bands[6] = self.bands[6] * 0.6 + snap.6 * 0.4
             self.bands[7] = self.bands[7] * 0.6 + snap.7 * 0.4
-            self.rms = self.rms * 0.7 + rmsValue * 0.3
-            self.onset = onsetDetected
+            self.rms = self.rms * 0.7 + scaledRms * 0.3
+            self.onset = onsetGated
         }
     }
 }

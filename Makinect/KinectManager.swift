@@ -98,6 +98,10 @@ final class KinectManager {
     // Audio (FFT bands / RMS / onset for visualizations)
     let audio = AudioEngine()
 
+    // Universal modifiers applied across every visualizer (hue / sat / val
+    // / glow at output stage; speed and audio-reactivity scale inputs).
+    let common = VisualizationCommonParams()
+
     // Per-visualizer user controls, exposed in SidePanel and read by the
     // visualizer each frame via VisualizerInputs.
     let parametricSwarm = ParametricSwarmConfig()

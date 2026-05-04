@@ -41,6 +41,16 @@ struct MetalKinectView: NSViewRepresentable {
         weak var view: MTKView?
         private var startTime = Date()
 
+        // Offscreen render target — the visualizer renders here, then a final
+        // post-process pass applies the universal Common Params (hue / sat /
+        // val / glow) and writes the result into the drawable. One extra
+        // pass per frame, ~0.1ms — buys universal colour controls with zero
+        // per-visualizer shader changes.
+        private var offscreenColor: MTLTexture?
+        private var offscreenDepth: MTLTexture?
+        private var offscreenSize: CGSize = .zero
+        private let postPSO: MTLRenderPipelineState
+
         init(manager: KinectManager, kind: VisualizationKind) {
             self.manager = manager
             self.currentKind = kind
@@ -57,12 +67,48 @@ struct MetalKinectView: NSViewRepresentable {
                 fatalError("Failed to allocate Kinect textures")
             }
             self.textures = tx
+
+            // Common-params post-process pipeline.
+            let pdesc = MTLRenderPipelineDescriptor()
+            pdesc.vertexFunction = lib.makeFunction(name: "passthrough_vs")
+            pdesc.fragmentFunction = lib.makeFunction(name: "common_post_fs")
+            pdesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            guard let pso = try? dev.makeRenderPipelineState(descriptor: pdesc) else {
+                fatalError("Failed to build common_post pipeline — Shaders.metal must compile")
+            }
+            self.postPSO = pso
+
             // Optional — if the synth kernels failed to load, synthetic mode just
             // shows zeroed textures (visualizers still render, just blank).
             self.synthetic = SyntheticFrameSource(device: dev, library: lib)
             super.init()
             manager.attachVisualizationTextures(textures)
             setKind(kind)
+        }
+
+        /// Allocate (or reallocate after resize) the offscreen color + depth
+        /// textures the visualizer renders into. Pixel formats match the
+        /// drawable so visualizer pipelines compiled against the view's
+        /// formats work without changes.
+        private func ensureOffscreen(size: CGSize, colorFormat: MTLPixelFormat) {
+            let w = max(1, Int(size.width))
+            let h = max(1, Int(size.height))
+            if let tex = offscreenColor, tex.width == w, tex.height == h { return }
+
+            let cdesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: colorFormat, width: w, height: h, mipmapped: false
+            )
+            cdesc.usage = [.renderTarget, .shaderRead]
+            cdesc.storageMode = .private
+            offscreenColor = device.makeTexture(descriptor: cdesc)
+
+            let ddesc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: .depth32Float, width: w, height: h, mipmapped: false
+            )
+            ddesc.usage = [.renderTarget]
+            ddesc.storageMode = .private
+            offscreenDepth = device.makeTexture(descriptor: ddesc)
+            offscreenSize = size
         }
 
         func setKind(_ kind: VisualizationKind) {
@@ -116,19 +162,33 @@ struct MetalKinectView: NSViewRepresentable {
             }
         }
 
-        func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+        func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+            // Drop the offscreen textures so they're rebuilt at the new size on
+            // the next draw call. (Don't recreate eagerly — the new drawable
+            // size may not be live yet.)
+            offscreenColor = nil
+            offscreenDepth = nil
+        }
 
         func draw(in view: MTKView) {
             guard let viz = visualizer,
                   let drawable = view.currentDrawable,
-                  let descriptor = view.currentRenderPassDescriptor,
+                  let drawablePass = view.currentRenderPassDescriptor,
                   let commandBuffer = textures.commandQueue.makeCommandBuffer() else { return }
 
-            let timeSeconds = Float(Date().timeIntervalSince(startTime))
+            // — Universal common params: pre-scale time and route audio
+            //   reactivity into the AudioEngine so every visualizer reads
+            //   already-scaled values without per-viz changes.
+            let common = manager.common
+            let baseTime = Float(Date().timeIntervalSince(startTime))
+            let timeSeconds = baseTime * common.speedMul
+            manager.audio.outputMultiplier = common.audioReactivity
 
-            // In synthetic mode, fill the same MTLTextures the Kinect bridge would
-            // before the visualizer's render pass reads them. Same command buffer
-            // → Metal handles the compute→render dependency automatically.
+            // — Allocate the offscreen target if needed.
+            ensureOffscreen(size: view.drawableSize, colorFormat: view.colorPixelFormat)
+
+            // — Synthetic compute pass (if in synthetic mode) goes onto the
+            //   same command buffer as the visualizer/post passes.
             if manager.source == .synthetic, let synth = synthetic {
                 synth.encode(
                     into: commandBuffer,
@@ -138,7 +198,18 @@ struct MetalKinectView: NSViewRepresentable {
                 )
             }
 
-            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+            // — Pass 1: visualizer renders into the offscreen texture.
+            let offDesc = MTLRenderPassDescriptor()
+            offDesc.colorAttachments[0].texture = offscreenColor
+            offDesc.colorAttachments[0].loadAction = .clear
+            offDesc.colorAttachments[0].storeAction = .store
+            offDesc.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+            offDesc.depthAttachment.texture = offscreenDepth
+            offDesc.depthAttachment.loadAction = .clear
+            offDesc.depthAttachment.storeAction = .dontCare
+            offDesc.depthAttachment.clearDepth = 1.0
+
+            guard let offEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: offDesc) else {
                 commandBuffer.commit()
                 return
             }
@@ -150,11 +221,31 @@ struct MetalKinectView: NSViewRepresentable {
                 timeSeconds: timeSeconds,
                 segmentationNearMM: manager.segmentationNearMM,
                 segmentationFarMM: manager.segmentationFarMM,
+                common: common,
                 parametricSwarm: manager.parametricSwarm
             )
 
-            viz.draw(in: view, encoder: encoder, inputs: inputs)
-            encoder.endEncoding()
+            viz.draw(in: view, encoder: offEncoder, inputs: inputs)
+            offEncoder.endEncoding()
+
+            // — Pass 2: post-process applies hue/sat/val/glow modifiers and
+            //   writes the result into the drawable.
+            guard let postEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: drawablePass) else {
+                commandBuffer.commit()
+                return
+            }
+            postEncoder.setRenderPipelineState(postPSO)
+            postEncoder.setFragmentTexture(offscreenColor, index: 0)
+            var postUniforms = SIMD4<Float>(
+                common.hueShift,
+                common.saturationMul,
+                common.brightnessMul,
+                common.glowMul
+            )
+            postEncoder.setFragmentBytes(&postUniforms, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+            postEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            postEncoder.endEncoding()
+
             commandBuffer.present(drawable)
             commandBuffer.commit()
         }

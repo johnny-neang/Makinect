@@ -149,6 +149,8 @@ struct SidePanel: View {
             .labelsHidden()
         }
 
+        universalControlsSection
+
         GroupBox("Depth Range") {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Near: \(Int(manager.segmentationNearMM)) mm").font(.callout)
@@ -189,6 +191,59 @@ struct SidePanel: View {
 
         if manager.visualization == .parametricSwarm {
             parametricSwarmSection
+        }
+    }
+
+    // — Universal Controls — six modifiers that affect every visualizer:
+    //   • Audio Reactive toggle + slider (drives AudioEngine.outputMultiplier)
+    //   • Speed (scales the time input every viz reads)
+    //   • Hue Shift / Saturation / Brightness / Glow (post-process pass)
+    @ViewBuilder
+    private var universalControlsSection: some View {
+        let common = manager.common
+
+        GroupBox("Universal Controls") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Audio Reactive", isOn: Bindable(common).audioReactiveOn)
+                    .font(.callout)
+
+                LabeledContent("Audio", value: String(format: "%.2f", common.audioReactivity))
+                    .font(.caption)
+                Slider(value: Bindable(common).audioReactivity, in: 0...1.5)
+
+                LabeledContent("Speed", value: String(format: "%.2f×", common.speedMul))
+                    .font(.caption)
+                Slider(value: Bindable(common).speedMul, in: 0...3)
+
+                Divider()
+
+                LabeledContent("Hue Shift", value: String(format: "%+.2f", common.hueShift))
+                    .font(.caption)
+                Slider(value: Bindable(common).hueShift, in: -0.5...0.5)
+
+                LabeledContent("Saturation", value: String(format: "%.2f×", common.saturationMul))
+                    .font(.caption)
+                Slider(value: Bindable(common).saturationMul, in: 0...2)
+
+                LabeledContent("Brightness", value: String(format: "%.2f×", common.brightnessMul))
+                    .font(.caption)
+                Slider(value: Bindable(common).brightnessMul, in: 0...2)
+
+                LabeledContent("Glow", value: String(format: "%.2f×", common.glowMul))
+                    .font(.caption)
+                Slider(value: Bindable(common).glowMul, in: 0...3)
+
+                Button("Reset to neutral") {
+                    common.audioReactivity = 1.0
+                    common.speedMul = 1.0
+                    common.hueShift = 0
+                    common.saturationMul = 1.0
+                    common.brightnessMul = 1.0
+                    common.glowMul = 1.0
+                }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity)
+            }
         }
     }
 
