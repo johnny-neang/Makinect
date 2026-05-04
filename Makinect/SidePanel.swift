@@ -210,6 +210,70 @@ struct SidePanel: View {
         if manager.visualization == .mandelbulbAviary {
             mandelbulbAviarySection
         }
+
+        if manager.visualization == .bodyOfPetals {
+            bodyOfPetalsSection
+        }
+    }
+
+    @ViewBuilder
+    private var bodyOfPetalsSection: some View {
+        let cfg = manager.bodyOfPetals
+        GroupBox("Body of Petals — Field") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Petal Size", value: String(format: "%.3f", cfg.petalSize))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).petalSize, in: 0.020...0.080)
+
+                LabeledContent("Density", value: String(format: "%.2f", cfg.density))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).density, in: 0...1)
+
+                LabeledContent("Fall Speed", value: String(format: "%.3f", cfg.fallSpeed))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).fallSpeed, in: 0...0.5)
+
+                LabeledContent("Bass→Fall", value: String(format: "%.2f", cfg.bassFall))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bassFall, in: 0...0.30)
+            }
+        }
+
+        GroupBox("Body of Petals — Palette") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Hue A", value: String(format: "%.2f", cfg.hueA))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueA, in: 0...1)
+
+                LabeledContent("Hue B", value: String(format: "%.2f", cfg.hueB))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueB, in: 0...1)
+
+                LabeledContent("Hue C", value: String(format: "%.2f", cfg.hueC))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueC, in: 0...1)
+
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+
+                LabeledContent("Sub-Surface", value: String(format: "%.2f", cfg.subSurface))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).subSurface, in: 0...1)
+            }
+        }
+
+        GroupBox("Body of Petals — Body & Beats") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Body Avoid", value: String(format: "%.2f", cfg.bodyAvoidance))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyAvoidance, in: 0...2)
+
+                LabeledContent("Onset Bouquet", value: String(format: "%.2f", cfg.onsetBouquet))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).onsetBouquet, in: 0...1)
+            }
+        }
     }
 
     @ViewBuilder

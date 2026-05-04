@@ -1421,10 +1421,17 @@ fragment float4 pixel_storm_fs(
 // repulsion and are tinted with sub-surface scattering glow. Bass releases waves
 // of new petals; onset detonates a bouquet from screen center.
 
+struct PetalsParams {
+    float4 motion;    // (petalSize, density, fallSpeed, bassFall)
+    float4 palette;   // (hueA, hueB, hueC, saturation)
+    float4 mood;      // (subSurface, bodyAvoidance, onsetBouquet, _)
+};
+
 fragment float4 petals_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant PetalsParams &cfg [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -1438,6 +1445,12 @@ fragment float4 petals_fs(
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
+    // — User-tunable parameters
+    float petalSizeBase = cfg.motion.x;
+    float density       = cfg.motion.y;
+    float fallSpeed     = cfg.motion.z;
+    float bassFall      = cfg.motion.w;
+
     // Background gradient — soft cream → dusty lavender for spring atmosphere
     float3 bg = mix(float3(0.94, 0.86, 0.78), float3(0.78, 0.65, 0.78), smoothstep(0.0, 1.0, uv.y));
     bg *= 0.65 + bass * 0.20;
@@ -1445,11 +1458,11 @@ fragment float4 petals_fs(
     float dust = noise2(uv * 220.0 + t * 0.6) * 0.06;
     bg += float3(dust * 0.6, dust * 0.5, dust * 0.4);
 
-    // — Petal grid (skewed for organic spread)
-    float scrollSpeed = 0.05 + bass * 0.10;
-    float petalSize = 0.040 + treb * 0.015;
+    // — Petal grid (skewed for organic spread). Size + scroll user-controlled.
+    float scrollSpeed = fallSpeed + bass * bassFall;
+    float petalSize = petalSizeBase + treb * 0.015;
     float2 pUV = uv;
-    pUV.y -= t * scrollSpeed;  // gravity-fall
+    pUV.y -= t * scrollSpeed;
     pUV /= petalSize;
 
     // Skew for offset rows
@@ -1461,13 +1474,13 @@ fragment float4 petals_fs(
     float cellHash = hash21(cell);
     float cellHash2 = hash21(cell + 17.7);
 
-    // Skip some cells (spaces between petals)
-    float cellAlive = step(0.30 - bass * 0.15, cellHash);
+    // Skip some cells (spaces between petals) — density user-controlled.
+    float cellAlive = step(1.0 - density - bass * 0.15, cellHash);
 
-    // Onset bouquet: extra petals burst from center
-    if (u.onset > 0.5) {
+    // Onset bouquet: extra petals burst from center — magnitude user-controlled.
+    if (u.onset > 0.5 && cfg.mood.z > 0.001) {
         float distFromCenter = length(uv - 0.5);
-        if (distFromCenter < 0.3 && hash21(cell + t * 100.0) > 0.5) cellAlive = 1.0;
+        if (distFromCenter < 0.3 * cfg.mood.z && hash21(cell + t * 100.0) > 0.5) cellAlive = 1.0;
     }
 
     // Petal shape: rotated ellipse (slow rotation per cell)
@@ -1483,17 +1496,18 @@ fragment float4 petals_fs(
 
     float petalMask = smoothstep(0.42, 0.32, petalDist) * cellAlive;
 
-    // Petal color: pinks, creams, deep crimson — varied per cell
+    // Petal color: three user-controlled hues, randomly assigned per cell.
     float hueChoice = cellHash * 3.0;
-    float3 petalCol;
-    if (hueChoice < 1.0) petalCol = float3(0.97, 0.85, 0.86);  // soft pink
-    else if (hueChoice < 2.0) petalCol = float3(0.78, 0.30, 0.40);  // crimson
-    else petalCol = float3(0.96, 0.92, 0.78);  // cream
+    float petalHue;
+    if      (hueChoice < 1.0) petalHue = cfg.palette.x;
+    else if (hueChoice < 2.0) petalHue = cfg.palette.y;
+    else                      petalHue = cfg.palette.z;
+    float3 petalCol = hsv2rgb(float3(petalHue, cfg.palette.w, 0.95));
 
-    // Sub-surface scattering glow — bright center, dim edge
+    // Sub-surface scattering glow — strength user-controlled.
     float subSurface = pow(1.0 - petalDist / 0.42, 2.0);
     float3 ssColor = mix(petalCol, float3(1.0, 0.95, 0.90), 0.5);
-    petalCol = mix(petalCol, ssColor, subSurface * 0.6);
+    petalCol = mix(petalCol, ssColor, subSurface * cfg.mood.x);
 
     // Wet-edge highlight (rim)
     float rim = smoothstep(0.30, 0.42, petalDist) * smoothstep(0.45, 0.32, petalDist);
@@ -1502,9 +1516,9 @@ fragment float4 petals_fs(
     float3 col = bg;
     col = mix(col, petalCol, petalMask);
 
-    // — Body avoidance: if there's a body here, dim petals
-    if (inBody) {
-        col = mix(col, bg * 0.85, 0.5);
+    // — Body avoidance: if there's a body here, dim petals (strength user-controlled).
+    if (inBody && cfg.mood.y > 0.001) {
+        col = mix(col, bg * 0.85, 0.5 * cfg.mood.y);
     }
 
     // Audio glow

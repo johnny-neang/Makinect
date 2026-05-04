@@ -4,12 +4,23 @@
 // Bass falls petals faster; treble shrinks them; onset detonates a bouquet from
 // screen center. Inspiration: Quayola's *Strata*, Marshmallow Laser Feast's
 // atmospherics, traditional cherry blossom *hanami* aesthetics.
+//
+// User controls (BodyOfPetalsConfig): petal size + density / fall speed +
+// bass coupling / 3-tone hue palette + saturation / sub-surface scatter /
+// body avoidance / onset bouquet.
 
 import Metal
 import MetalKit
+import simd
 
 @MainActor
 final class BodyOfPetalsVisualizer: Visualizer {
+    private struct Params {
+        var motion: SIMD4<Float>    // (petalSize, density, fallSpeed, bassFall)
+        var palette: SIMD4<Float>   // (hueA, hueB, hueC, saturation)
+        var mood: SIMD4<Float>      // (subSurface, bodyAvoidance, onsetBouquet, _)
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -35,9 +46,17 @@ final class BodyOfPetalsVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.bodyOfPetals
+        var params = Params(
+            motion:  SIMD4<Float>(cfg.petalSize, cfg.density, cfg.fallSpeed, cfg.bassFall),
+            palette: SIMD4<Float>(cfg.hueA, cfg.hueB, cfg.hueC, cfg.saturation),
+            mood:    SIMD4<Float>(cfg.subSurface, cfg.bodyAvoidance, cfg.onsetBouquet, 0)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

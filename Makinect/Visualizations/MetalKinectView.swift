@@ -225,7 +225,8 @@ struct MetalKinectView: NSViewRepresentable {
                 parametricSwarm: manager.parametricSwarm,
                 particleStorm: manager.particleStorm,
                 mercuryStorm: manager.mercuryStorm,
-                mandelbulbAviary: manager.mandelbulbAviary
+                mandelbulbAviary: manager.mandelbulbAviary,
+                bodyOfPetals: manager.bodyOfPetals
             )
 
             viz.draw(in: view, encoder: offEncoder, inputs: inputs)
