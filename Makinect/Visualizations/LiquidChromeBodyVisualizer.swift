@@ -1,16 +1,18 @@
-// ParametricSwarmVisualizer — see corresponding shader in Shaders.metal for the per-pixel
-// composite. Swift driver is intentionally thin so the shader carries the artistic load.
+// LiquidChromeBodyVisualizer — SDF of body silhouette raymarched with mirror-perfect
+// chrome reflections of an HDR environment that pulses with audio.
+//
+// Inspiration: Quayola "Strata", Cabbibo's chrome work, iquilezles raymarching articles.
 
 import Metal
 import MetalKit
 
 @MainActor
-final class ParametricSwarmVisualizer: Visualizer {
+final class LiquidChromeBodyVisualizer: Visualizer {
     private let pipeline: MTLRenderPipelineState
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = library.makeFunction(name: "passthrough_vs")
-        desc.fragmentFunction = library.makeFunction(name: "parametric_swarm_fs")
+        desc.fragmentFunction = library.makeFunction(name: "liquid_chrome_fs")
         desc.colorAttachments[0].pixelFormat = colorPixelFormat
         desc.depthAttachmentPixelFormat = .depth32Float
         guard let pso = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }

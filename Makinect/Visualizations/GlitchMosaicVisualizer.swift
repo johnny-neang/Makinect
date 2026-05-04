@@ -1,16 +1,16 @@
-// ParametricSwarmVisualizer — see corresponding shader in Shaders.metal for the per-pixel
+// GlitchMosaicVisualizer — see corresponding shader in Shaders.metal for the per-pixel
 // composite. Swift driver is intentionally thin so the shader carries the artistic load.
 
 import Metal
 import MetalKit
 
 @MainActor
-final class ParametricSwarmVisualizer: Visualizer {
+final class GlitchMosaicVisualizer: Visualizer {
     private let pipeline: MTLRenderPipelineState
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = library.makeFunction(name: "passthrough_vs")
-        desc.fragmentFunction = library.makeFunction(name: "parametric_swarm_fs")
+        desc.fragmentFunction = library.makeFunction(name: "glitch_mosaic_fs")
         desc.colorAttachments[0].pixelFormat = colorPixelFormat
         desc.depthAttachmentPixelFormat = .depth32Float
         guard let pso = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }
@@ -24,7 +24,7 @@ final class ParametricSwarmVisualizer: Visualizer {
         let b = inputs.audio.bands
         if b.count >= 8 { u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]) }
         encoder.setRenderPipelineState(pipeline)
-        encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
+        encoder.setFragmentTexture(inputs.textures.colorTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }

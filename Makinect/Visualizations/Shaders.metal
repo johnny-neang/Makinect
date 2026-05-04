@@ -2744,3 +2744,1575 @@ fragment float4 psw_bg_fs(
     c *= 0.97 + 0.03 * sin(in.uv.y * 1080.0 * 0.7);
     return float4(c, 1.0);
 }
+
+// =============================================================================
+// MARK: - Research-grounded replacements (#40+)
+//
+// All of these target a higher visual floor than the earlier batch:
+//   - HDR float math accumulated then ACES tone-mapped at the end
+//   - Multi-layer audio mapping (different bands drive different aspects)
+//   - Specific colour palettes lifted from referenced art
+//   - Body interaction is sculptural, not just gating
+// =============================================================================
+
+// Shared ACES filmic tone-map (Narkowicz 2015) — saves us from the bare saturate()
+// that made the old shaders feel flat.
+inline float3 aces_tonemap(float3 c) {
+    return saturate((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14));
+}
+
+// Cosine-palette gradient (Inigo Quilez palette trick).
+inline float3 iq_palette(float t, float3 a, float3 b, float3 c, float3 d) {
+    return a + b * cos(6.28318 * (c * t + d));
+}
+
+// MARK: - #40 Plasma Sea
+//
+// Volumetric caustics: per pixel we trace a refracted ray through a wave-
+// displaced surface, then accumulate "photon density" along the ray with
+// chromatic dispersion. Body silhouette tints the absorbing medium so you
+// become a coloured shadow inside the tank.
+
+inline float wave_height(float2 p, float t, float bass) {
+    float h = 0.0;
+    h += sin(p.x * 1.6 + t * 0.7 + bass * 1.5) * 0.18;
+    h += sin(p.y * 1.9 - t * 0.6) * 0.16;
+    h += sin(dot(p, float2(1.2, -0.8)) * 2.4 + t * 1.1) * 0.10;
+    h += sin(length(p - float2(sin(t * 0.3), cos(t * 0.4))) * 5.0 - t * 1.7) * 0.07;
+    return h;
+}
+
+inline float caustic_brightness(float2 p, float t, float bass, float dispersion) {
+    // Forward-difference normal of the wave height; intensity comes from how
+    // much that normal focuses light onto the pixel.
+    const float e = 0.0035;
+    float h0 = wave_height(p, t, bass);
+    float hx = wave_height(p + float2(e, 0), t, bass);
+    float hy = wave_height(p + float2(0, e), t, bass);
+    float2 n = float2(hx - h0, hy - h0) / e;
+    float focus = exp(-dot(n, n) * (4.0 - dispersion * 1.5));
+    // Add a Voronoi-noise crispness pass so caustic lines feel sharp.
+    float v = fract(sin(dot(floor(p * 28.0 + n * 14.0), float2(127.1, 311.7))) * 43758.5);
+    focus += pow(v, 36.0) * 0.5;
+    return focus;
+}
+
+fragment float4 plasma_sea_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 4.0;
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+    float treb = u.bands[6] + u.bands[7];
+
+    // 3-channel chromatic dispersion: sample R, G, B at slightly different scales
+    // so the caustics fringe like real water.
+    float r = caustic_brightness(p * (1.00 + 0.012 * sin(t * 0.4)), t, bass, treb);
+    float g = caustic_brightness(p * 1.000, t * 1.02, bass, treb);
+    float b = caustic_brightness(p * (1.00 - 0.012 * cos(t * 0.5)), t * 1.05, bass, treb);
+    float3 caustic = float3(r, g, b);
+    caustic = pow(caustic, float3(2.4 - bass * 0.4));
+
+    // Body presence: tint the medium so the silhouette glows from within.
+    float2 depthUV = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float depthMM = depthTex.sample(s, depthUV).r;
+    bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
+    float bodyT = inBody ? saturate((u.farMM - depthMM) / max(1.0, u.farMM - u.nearMM)) : 0.0;
+
+    // Iquilez cosine palette — deep-water teal/aqua/gold.
+    float3 deep = iq_palette(0.5 + bass * 0.1,
+                             float3(0.05, 0.15, 0.20),
+                             float3(0.30, 0.50, 0.50),
+                             float3(0.6, 0.7, 0.8),
+                             float3(0.0, 0.10, 0.20));
+    float3 lit  = iq_palette(0.7 + treb * 0.1,
+                             float3(0.50, 0.60, 0.70),
+                             float3(0.50, 0.50, 0.50),
+                             float3(1.0, 1.0, 1.0),
+                             float3(0.0, 0.10, 0.20));
+
+    float3 col = deep + caustic * lit * (1.0 + u.rms * 1.2);
+    // Body subsurface glow.
+    col += float3(1.0, 0.55, 0.30) * bodyT * (0.4 + caustic.r * 0.7);
+    // Onset adds a quick highlight.
+    col += float3(0.7, 0.9, 1.0) * u.onset * (0.4 + caustic.g * 0.6);
+
+    // Vignette for depth.
+    col *= smoothstep(1.6, 0.4, length((uv - 0.5) * 1.4));
+    return float4(aces_tonemap(col), 1.0);
+}
+
+// MARK: - #41 Liquid Chrome Body
+//
+// Build an SDF of the body silhouette (depth → 2D blob in 3D space), raymarch a
+// chrome surface, reflect rays into a procedural HDR environment. Audio drives
+// the environment palette and a wobble term that makes the chrome feel liquid.
+
+inline float chrome_sample_depth(texture2d<float, access::sample> depthTex,
+                                 float2 uv, float nearMM, float farMM) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 d = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float mm = depthTex.sample(s, d).r;
+    if (mm <= 0 || mm >= 9000) return 1.0;
+    return clamp((mm - nearMM) / max(1.0, farMM - nearMM), 0.0, 1.0);
+}
+
+// SDF: returns negative INSIDE the body silhouette, positive outside.
+// Distance is roughly in screen units, with z used so reflections look 3D.
+inline float chrome_sdf(float3 p,
+                        texture2d<float, access::sample> depthTex,
+                        float nearMM, float farMM, float t, float wobble) {
+    // Project p.xy back to UV space, accounting for aspect.
+    float2 uv = p.xy * 0.5 + 0.5;
+    if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) {
+        return length(p) - 0.05;
+    }
+    // Body presence ∈ [0,1] — 0 = body, 1 = far.
+    float depthN = chrome_sample_depth(depthTex, float2(uv.x, 1.0 - uv.y), nearMM, farMM);
+    float occupied = step(depthN, 0.92);
+    // Build a height profile so body has rounded volume.
+    float bodyZ = -0.4 + (1.0 - depthN) * 0.6;
+    // Wobble the surface like mercury.
+    float w = sin(p.x * 8.0 + t * 1.4) * sin(p.y * 8.0 - t * 1.1) * wobble;
+    bodyZ += w * 0.15;
+    float zd = p.z - bodyZ;
+    float xy = (1.0 - occupied) * 0.5 + 0.05;  // distance to body in screen plane
+    return max(xy - 0.1, zd);
+}
+
+inline float3 chrome_normal(float3 p,
+                            texture2d<float, access::sample> depthTex,
+                            float nearMM, float farMM, float t, float wobble) {
+    const float e = 0.0025;
+    float dx = chrome_sdf(p + float3(e, 0, 0), depthTex, nearMM, farMM, t, wobble)
+             - chrome_sdf(p - float3(e, 0, 0), depthTex, nearMM, farMM, t, wobble);
+    float dy = chrome_sdf(p + float3(0, e, 0), depthTex, nearMM, farMM, t, wobble)
+             - chrome_sdf(p - float3(0, e, 0), depthTex, nearMM, farMM, t, wobble);
+    float dz = chrome_sdf(p + float3(0, 0, e), depthTex, nearMM, farMM, t, wobble)
+             - chrome_sdf(p - float3(0, 0, e), depthTex, nearMM, farMM, t, wobble);
+    return normalize(float3(dx, dy, dz));
+}
+
+// Procedural HDR environment for reflections — palette pulses with audio.
+inline float3 chrome_env(float3 d, float t, float bass, float treb) {
+    float h = atan2(d.z, d.x) * 0.15915 + 0.5;
+    float v = d.y * 0.5 + 0.5;
+    float3 base = iq_palette(h + t * 0.05,
+                             float3(0.5, 0.5, 0.5),
+                             float3(0.5, 0.5, 0.5),
+                             float3(1.0, 1.0, 1.0),
+                             float3(0.0 + bass * 0.1, 0.33, 0.67));
+    // Sun-disk highlight.
+    float3 sunDir = normalize(float3(sin(t * 0.3), 0.6, cos(t * 0.3)));
+    float sun = pow(max(0.0, dot(d, sunDir)), 64.0);
+    base += float3(2.0, 1.6, 1.2) * sun * (1.0 + treb * 1.5);
+    // Sky gradient on top.
+    base = mix(base * 0.7, float3(1.1, 0.8, 0.5), smoothstep(0.2, 0.9, v));
+    return base;
+}
+
+fragment float4 liquid_chrome_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    float2 uv = in.uv;
+    float2 p2 = (uv - 0.5) * 2.0;
+    p2.x *= u.aspect;
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+    float treb = u.bands[6] + u.bands[7];
+    float wobble = 0.5 + u.rms * 1.5 + u.onset * 0.7;
+
+    // Camera at +Z, looking toward -Z. Orthographic-ish for simplicity.
+    float3 ro = float3(p2, 0.6);
+    float3 rd = float3(0, 0, -1);
+
+    // Sphere-trace toward the surface.
+    float dist = 0.0;
+    float3 pos = ro;
+    bool hit = false;
+    for (int i = 0; i < 48; i++) {
+        float d = chrome_sdf(pos, depthTex, u.nearMM, u.farMM, t, wobble);
+        if (d < 0.001) { hit = true; break; }
+        if (dist > 1.5) break;
+        pos += rd * d;
+        dist += d;
+    }
+
+    if (!hit) {
+        // Background: same env in look direction.
+        float3 bg = chrome_env(rd, t, bass, treb) * 0.25;
+        return float4(aces_tonemap(bg), 1.0);
+    }
+
+    float3 n = chrome_normal(pos, depthTex, u.nearMM, u.farMM, t, wobble);
+    float3 r = reflect(rd, n);
+    float fres = pow(1.0 - max(0.0, dot(-rd, n)), 5.0);
+    float3 env = chrome_env(r, t, bass, treb);
+    float3 base = float3(0.10, 0.11, 0.13);
+    float3 col = mix(base, env, 0.65 + 0.35 * fres) * (1.0 + u.rms * 0.4);
+
+    // Onset spike: brief specular flare aligned with view dir.
+    col += float3(1.0, 0.9, 0.7) * u.onset * pow(max(0.0, dot(n, -rd)), 16.0);
+
+    return float4(aces_tonemap(col), 1.0);
+}
+
+// MARK: - #42 Hyperbolic Tunnel
+//
+// Tile the Poincaré disk with a triangle/heptagon group; each step we run a
+// few inversions in the unit circle to fold UV back into the fundamental
+// domain. Audio modulates the curvature and rotation.
+
+inline float2 mobius_invert(float2 p) {
+    float r2 = dot(p, p);
+    return p / max(r2, 1e-4);
+}
+
+inline float2 fold_disk(float2 p, int steps, float swirl) {
+    for (int i = 0; i < steps; i++) {
+        if (length(p) > 1.0) p = mobius_invert(p);
+        // Rotate by swirl per fold so the tessellation spins.
+        float c = cos(swirl);
+        float s = sin(swirl);
+        p = float2(c * p.x - s * p.y, s * p.x + c * p.y);
+        // Reflect across one of the three triangle mirrors (rotation symmetry of 6).
+        float a = atan2(p.y, p.x);
+        float r = length(p);
+        a = fract(a / 6.28318 * 6.0) / 6.0 * 6.28318;
+        p = r * float2(cos(a), sin(a));
+    }
+    return p;
+}
+
+fragment float4 hyperbolic_tunnel_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 1.6;
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+
+    // Body presence pulls the disk centre toward the silhouette so the tunnel
+    // feels emitted from the body.
+    float2 depthUV = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float depthMM = depthTex.sample(s, depthUV).r;
+    bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
+
+    float swirl = 0.10 + bass * 0.30 + sin(t * 0.27) * 0.06;
+    float2 q = fold_disk(p, 6, swirl);
+
+    // Build a "tile" from distance to fold seams.
+    float seam = abs(0.5 - fract(length(q) * 4.0));
+    float radial = abs(sin(atan2(q.y, q.x) * 7.0 + t * 0.6));
+    float tile = pow(saturate(1.0 - seam * 6.0), 2.5);
+    tile += pow(radial, 8.0) * 0.5;
+
+    // Iridescent glass palette.
+    float3 col = iq_palette(t * 0.05 + length(q) * 0.7,
+                            float3(0.5, 0.5, 0.5),
+                            float3(0.5, 0.5, 0.5),
+                            float3(2.0, 1.0, 0.0),
+                            float3(0.50, 0.20, 0.25));
+    col *= 0.4 + 1.6 * tile;
+
+    if (inBody) col *= 1.4;
+    col += float3(0.4, 0.6, 1.0) * u.onset * 0.5;
+    col *= smoothstep(2.0, 0.8, length(p));
+    return float4(aces_tonemap(col), 1.0);
+}
+
+
+// MARK: - WIP stubs
+//
+// Visually-distinct holding patterns for visualizers whose shader is still in
+// progress. Each sits at low energy so it's clearly a "coming soon" not a final.
+
+inline float3 wip_pattern(float2 uv, float t, float rms, float seed) {
+    float h = fract(seed * 0.317 + t * 0.05);
+    float pulse = 0.4 + 0.6 * sin(t * 0.6 + seed);
+    float ring = abs(0.5 - fract(length((uv - 0.5)) * 5.0 - t * 0.3));
+    float band = pow(1.0 - ring * 6.0, 6.0);
+    float3 col = iq_palette(h,
+        float3(0.05, 0.05, 0.07),
+        float3(0.10, 0.15, 0.20),
+        float3(1.0, 1.0, 1.0),
+        float3(0.0, 0.10, 0.20));
+    col += float3(0.4, 0.4, 0.5) * band * (0.6 + rms * 0.6) * pulse;
+    return aces_tonemap(col);
+}
+
+#define WIP_FS(name, seed) \
+fragment float4 name(PassthroughVertexOut in [[stage_in]], \
+                     texture2d<float, access::sample> tex [[texture(0)]], \
+                     constant Uniforms &u [[buffer(0)]]) { \
+    return float4(wip_pattern(in.uv, u.time, u.rms, seed), 1.0); \
+}
+
+
+
+// MARK: - #43 Magnetic Iron Filings
+
+struct MIFUniforms {
+    float4 ctrl;       // (time, count, polarity, _)
+    float4 audio;      // (rms, onset, bassLow, treb)
+    float4 bandsLow;
+};
+
+struct MIFFiling {
+    float4 posAngle;   // (x, y, angle, life)
+};
+
+inline float mif_hash(float n) { return fract(sin(n) * 43758.5453); }
+
+inline float2 mif_dipole_field(float2 p, float2 source, float strength, float angle) {
+    // 2D approximation of a dipole field aligned along `angle`.
+    float2 d = p - source;
+    float r2 = dot(d, d) + 1e-3;
+    float r = sqrt(r2);
+    float2 dipDir = float2(cos(angle), sin(angle));
+    float dot_ = dot(d / r, dipDir);
+    float2 b = (3.0 * dot_ * (d / r) - dipDir) / (r2 * r);
+    return b * strength;
+}
+
+inline float2 mif_field_at(float2 p, float t, float bass, float pol,
+                           texture2d<float, access::sample> depthTex,
+                           float nearMM, float farMM) {
+    float2 f = float2(0);
+    // Two animated dipoles dancing around the centre.
+    float a1 = t * 0.3;
+    float a2 = -t * 0.27 + 1.7;
+    float2 s1 = float2(sin(t * 0.4) * 0.4, cos(t * 0.5) * 0.3);
+    float2 s2 = float2(sin(t * 0.3 + 2) * 0.5, cos(t * 0.2 + 1) * 0.4);
+    f += mif_dipole_field(p, s1, 0.04 * pol, a1);
+    f += mif_dipole_field(p, s2, 0.04 * -pol, a2);
+
+    // Body acts as a third dipole that tracks the centre of mass; sample depth
+    // along a coarse 4×4 grid to estimate body centroid and orientation.
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 bodyC = float2(0); float bodyW = 0;
+    for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {
+        float2 uv = (float2(i, j) + 0.5) / 4.0;
+        float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+        float mm = depthTex.sample(s, du).r;
+        if (mm > nearMM && mm < farMM && mm > 0) {
+            bodyC += (uv * 2.0 - 1.0); bodyW += 1.0;
+        }
+    }
+    if (bodyW > 0) {
+        bodyC /= bodyW;
+        f += mif_dipole_field(p, bodyC, 0.05 * (1.0 + bass), t * 0.4);
+    }
+    return f;
+}
+
+kernel void mif_init_kernel(
+    device MIFFiling *out [[buffer(0)]],
+    constant MIFUniforms &u [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= uint(u.ctrl.y)) return;
+    float fi = float(gid);
+    float x = mif_hash(fi * 0.013) * 2.0 - 1.0;
+    float y = mif_hash(fi * 0.027) * 2.0 - 1.0;
+    out[gid].posAngle = float4(x, y, 0, mif_hash(fi * 0.041));
+}
+
+kernel void mif_step_kernel(
+    device MIFFiling *src [[buffer(0)]],
+    device MIFFiling *dst [[buffer(1)]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant MIFUniforms &u [[buffer(2)]],
+    constant float2 &range [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint count = uint(u.ctrl.y);
+    if (gid >= count) return;
+    MIFFiling s = src[gid];
+    float2 p = s.posAngle.xy;
+    float t = u.ctrl.x;
+
+    float2 f = mif_field_at(p, t, u.audio.z, u.ctrl.z, depthTex, range.x, range.y);
+    // Filings drift along the field with a small step and align to it.
+    p += f * 0.6;
+    float angle = atan2(f.y, f.x);
+
+    // Recycle filings that drifted off-screen.
+    if (length(p) > 1.6) {
+        float fi = float(gid) + t * 7.13;
+        p = float2(mif_hash(fi) * 2.0 - 1.0, mif_hash(fi * 1.7) * 2.0 - 1.0);
+    }
+
+    dst[gid].posAngle = float4(p, angle, s.posAngle.w);
+}
+
+struct MIFOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex MIFOut mif_vs(
+    uint vid [[vertex_id]],
+    const device MIFFiling *src [[buffer(0)]],
+    constant MIFUniforms &u [[buffer(1)]]
+) {
+    uint pi = vid / 2;
+    uint end = vid & 1;
+    MIFFiling f = src[pi];
+    float2 p = f.posAngle.xy;
+    float a = f.posAngle.z;
+    // Filings are short stretched lines aligned with the local field.
+    float len = 0.012 * (1.0 + u.audio.x * 1.4);
+    float2 d = float2(cos(a), sin(a)) * (end == 0 ? -len : len);
+    MIFOut o;
+    o.position = float4(p + d, 0, 1);
+    // Warm/cool palette by angle, brightened by RMS.
+    float h = fract(0.55 + a / 6.28318 + u.audio.z * 0.2);
+    float3 col = hsv2rgb(float3(h, 0.7, 1.0));
+    o.color = float4(col * (0.5 + u.audio.x * 1.2), 1.0);
+    return o;
+}
+
+fragment float4 mif_fs(MIFOut in [[stage_in]]) {
+    return float4(aces_tonemap(in.color.rgb), in.color.a * 0.7);
+}
+
+// MARK: - #44 Sand Mandala
+
+struct SMUniforms {
+    float4 ctrl;     // (time, count, springK, damping)
+    float4 audio;    // (rms, onset, bassLow, treb)
+    float4 pattern;  // (rotation, symmetry, ringScale, morphSeed)
+};
+
+struct SMGrain {
+    float4 current;   // (x, y, hue, life)
+    float4 target;    // (x, y, _, _)
+    float4 velocity;  // (vx, vy, _, _)
+};
+
+inline float sm_hash(float n) { return fract(sin(n) * 43758.5453); }
+
+// Compute the target position for a grain given pattern parameters. We sweep a
+// dense set of (radius, theta) cells in a rotationally-symmetric mandala and
+// occasionally mirror to make sub-petals.
+inline float2 sm_target_for(uint gid, float4 pattern) {
+    float fi = float(gid);
+    float seed = pattern.w;
+    // Distribute grains to N rings with M divisions; n & m derived from seed.
+    int rings = 14;
+    int divisionsBase = int(pattern.y);   // symmetry e.g. 8
+    int divisions = max(divisionsBase, 6);
+    int perRing = 1024;
+    int ring = int(fi) / perRing;
+    int idx = int(fi) % perRing;
+    if (ring >= rings) ring = ring % rings;
+    float ringT = float(ring) / float(rings - 1);
+    float r = pattern.z + ringT * 0.42;
+
+    // Rotational division within the ring; petal index modulates with seed.
+    float petal = float(idx) / float(perRing) * float(divisions);
+    float petalIdx = floor(petal);
+    float petalT = fract(petal);
+    // Inside each petal: a 2D shape (lemniscate-like).
+    float petalAngle = (petalIdx + 0.5) / float(divisions) * 6.28318 + pattern.x;
+    float along = (petalT - 0.5) * 0.30;
+    float across = sin(petalT * 6.28318 * (1.0 + sm_hash(seed * 17.0 + ringT * 9.0))) * 0.07;
+    // Polar → cartesian.
+    float2 dir = float2(cos(petalAngle), sin(petalAngle));
+    float2 perp = float2(-dir.y, dir.x);
+    float2 p = dir * (r + along) + perp * across;
+    return p + 0.5;  // centre at (0.5, 0.5)
+}
+
+kernel void sm_init_kernel(
+    device SMGrain *out [[buffer(0)]],
+    constant SMUniforms &u [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= uint(u.ctrl.y)) return;
+    float fi = float(gid);
+    float2 target = sm_target_for(gid, u.pattern);
+    out[gid].current  = float4(target.x + (sm_hash(fi * 0.07) - 0.5) * 0.02,
+                               target.y + (sm_hash(fi * 0.13) - 0.5) * 0.02,
+                               sm_hash(fi * 0.31), 1.0);
+    out[gid].target   = float4(target, 0, 0);
+    out[gid].velocity = float4(0);
+}
+
+kernel void sm_step_kernel(
+    device SMGrain *src [[buffer(0)]],
+    device SMGrain *dst [[buffer(1)]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant SMUniforms &u [[buffer(2)]],
+    constant float2 &range [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint count = uint(u.ctrl.y);
+    if (gid >= count) return;
+    SMGrain s = src[gid];
+
+    // Recompute target every frame so onset-driven pattern changes propagate.
+    float2 target = sm_target_for(gid, u.pattern);
+    float2 cur = s.current.xy;
+    float2 vel = s.velocity.xy;
+
+    // Spring force toward target.
+    float2 toTarget = target - cur;
+    vel += toTarget * u.ctrl.z;
+    vel *= u.ctrl.w;
+
+    // Body repulsor: if grain sits on the body silhouette, push away.
+    constexpr sampler ss(filter::linear, address::clamp_to_edge);
+    float2 du = float2(cur.x, (cur.y * 1080.0 + 1.0) / 1082.0);
+    float mm = depthTex.sample(ss, du).r;
+    bool inBody = mm > range.x && mm < range.y && mm > 0;
+    if (inBody) {
+        float2 outward = normalize(cur - 0.5 + 0.001);
+        vel += outward * (0.0035 + u.audio.z * 0.012);
+    }
+    // Onset: outward burst from a moving point.
+    if (u.audio.y > 0.5) {
+        float2 burstC = float2(0.5 + 0.3 * sin(u.ctrl.x * 0.7),
+                               0.5 + 0.3 * cos(u.ctrl.x * 0.5));
+        float2 d = cur - burstC;
+        vel += normalize(d + 0.0001) * exp(-dot(d, d) * 50.0) * 0.06;
+    }
+
+    cur += vel;
+
+    dst[gid].current  = float4(cur, s.current.z, s.current.w);
+    dst[gid].target   = s.target;
+    dst[gid].velocity = float4(vel, 0, 0);
+}
+
+struct SMOut {
+    float4 position [[position]];
+    float pointSize [[point_size]];
+    float4 color;
+};
+
+vertex SMOut sm_point_vs(
+    uint vid [[vertex_id]],
+    const device SMGrain *src [[buffer(0)]],
+    constant SMUniforms &u [[buffer(1)]]
+) {
+    SMGrain g = src[vid];
+    SMOut o;
+    o.position = float4(g.current.xy * 2.0 - 1.0, 0, 1);
+    o.pointSize = clamp(2.0 + length(g.velocity.xy) * 30.0 + u.audio.x * 4.0, 1.0, 6.0);
+    // Tibetan palette: vermilion, gold, lapis, jade, ivory.
+    float idx = floor(fract(g.current.z * 5.0) * 5.0);
+    float3 palette[5] = {
+        float3(0.85, 0.18, 0.13),  // vermilion
+        float3(0.95, 0.78, 0.20),  // gold
+        float3(0.13, 0.30, 0.75),  // lapis
+        float3(0.20, 0.65, 0.40),  // jade
+        float3(0.95, 0.92, 0.80)   // ivory
+    };
+    int i = int(clamp(idx, 0.0, 4.0));
+    float3 col = palette[i];
+    // Boost on motion.
+    float speed = length(g.velocity.xy);
+    col *= (0.6 + u.audio.x * 0.6 + speed * 30.0);
+    o.color = float4(col, 1.0);
+    return o;
+}
+
+fragment float4 sm_point_fs(
+    SMOut in [[stage_in]],
+    float2 ptCoord [[point_coord]]
+) {
+    float r = length(ptCoord - 0.5) * 2.0;
+    float a = 1.0 - smoothstep(0.7, 1.0, r);
+    return float4(in.color.rgb * a, a);
+}
+
+// MARK: - #45 Dissipative Cells
+
+struct DCUniforms {
+    float4 ctrl;     // (time, count, aspect, _)
+    float4 audio;    // (rms, onset, bassLow, treb)
+};
+
+struct DCCell {
+    float4 posHueRadius;   // (x, y, hue, radius)
+    float4 ageAlive;       // (age, alive, _, _)
+};
+
+fragment float4 dissipative_cells_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    const device DCCell *cells [[buffer(0)]],
+    constant DCUniforms &u [[buffer(1)]]
+) {
+    float2 uv = in.uv;
+    float2 p = uv;
+    p.x *= u.ctrl.z;
+    int count = int(u.ctrl.y);
+
+    // Find the two nearest seeds for smooth Voronoi.
+    float d1 = 1e9, d2 = 1e9;
+    int i1 = 0, i2 = 0;
+    for (int i = 0; i < 64; i++) {
+        if (i >= count) break;
+        DCCell c = cells[i];
+        if (c.ageAlive.y < 0.5) continue;
+        float2 q = c.posHueRadius.xy;
+        q.x *= u.ctrl.z;
+        float d = length(p - q) / max(0.05, c.posHueRadius.w);
+        if (d < d1) { d2 = d1; i2 = i1; d1 = d; i1 = i; }
+        else if (d < d2) { d2 = d; i2 = i; }
+    }
+    if (count == 0) return float4(0, 0, 0, 1);
+
+    DCCell c1 = cells[i1];
+    DCCell c2 = cells[i2];
+    // Edge intensity from the gap between the two nearest distances.
+    float edge = saturate((d2 - d1) * 6.0);
+    float edgeGlow = pow(1.0 - edge, 16.0);
+
+    // Inner gradient — radial from cell centre, hue from the cell.
+    float2 q1 = c1.posHueRadius.xy; q1.x *= u.ctrl.z;
+    float r = length(p - q1) / max(0.05, c1.posHueRadius.w);
+    float age = c1.ageAlive.x;
+    float life = saturate(1.0 - age);
+
+    // Jewel-tone palette: deep saturated centres, cool rims.
+    float3 inner = hsv2rgb(float3(c1.posHueRadius.z, 0.85, 1.0));
+    float3 outer = hsv2rgb(float3(fract(c1.posHueRadius.z + 0.55), 0.55, 0.7));
+    float3 col = mix(inner * 0.05, outer, smoothstep(0.0, 1.0, r)) * (0.6 + life * 0.4);
+
+    // Edge glow — bright filament.
+    float3 edgeCol = hsv2rgb(float3(fract(0.55 + u.audio.x * 0.5), 0.4, 1.0));
+    col += edgeCol * edgeGlow * (0.6 + u.audio.x * 0.8);
+
+    // Body presence intensifies the cell over the silhouette.
+    constexpr sampler ss(filter::linear, address::clamp_to_edge);
+    float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float mm = depthTex.sample(ss, du).r;
+    bool inBody = mm > 500.0 && mm < 4000.0 && mm > 0;
+    if (inBody) col *= 1.4;
+
+    // Onset shimmer.
+    col += float3(0.6, 0.7, 1.0) * u.audio.y * edgeGlow * 0.7;
+
+    return float4(aces_tonemap(col), 1.0);
+}
+
+
+// MARK: - #46 Mocap Constellation
+//
+// Each star is a (position, birthTime, hue, energy) record. Fragment renders
+// twinkles + radial shockwaves emanating from recently-born stars.
+
+struct MCUniforms {
+    float4 ctrl;     // (time, count, aspect, _)
+    float4 audio;    // (rms, onset, bassLow, treb)
+};
+
+struct MCStar {
+    float4 posBirthHue;   // (x, y, birthTime, hue)
+    float4 energy;        // (energy, _, _, _)
+};
+
+fragment float4 mocap_constellation_fs(
+    PassthroughVertexOut in [[stage_in]],
+    const device MCStar *stars [[buffer(0)]],
+    constant MCUniforms &u [[buffer(1)]]
+) {
+    float2 uv = in.uv;
+    float aspect = u.ctrl.z;
+    float2 p = uv;
+    p.x *= aspect;
+    int count = int(u.ctrl.y);
+    float t = u.ctrl.x;
+
+    float3 col = float3(0.005, 0.01, 0.025);  // deep night-sky bg
+
+    for (int i = 0; i < 1024; i++) {
+        if (i >= count) break;
+        MCStar s = stars[i];
+        if (s.posBirthHue.z < -100.0) continue;
+        float age = t - s.posBirthHue.z;
+        if (age < 0 || age > 8.0) continue;
+
+        float2 sp = s.posBirthHue.xy;
+        sp.x *= aspect;
+        float r = length(p - sp);
+        float life = exp(-age * 0.45);
+
+        // Star core: bright twinkle.
+        float core = exp(-r * r * 1500.0) * (1.0 + u.audio.x * 0.6);
+        float3 starCol = hsv2rgb(float3(s.posBirthHue.w, 0.7, 1.0));
+        col += starCol * core * life * s.energy.x;
+
+        // Shockwave: a moving ring centred at birth time.
+        float ringR = age * 0.18;
+        float ringW = 0.012;
+        float ring = exp(-pow(r - ringR, 2.0) / (ringW * ringW)) * 0.20 * life;
+        col += starCol * ring * (1.0 + u.audio.z * 1.5);
+    }
+
+    // Subtle horizon-glow gradient so it never feels totally flat.
+    col += iq_palette(uv.y * 0.5,
+                      float3(0.01, 0.01, 0.02),
+                      float3(0.02, 0.04, 0.06),
+                      float3(1.0, 1.0, 1.0),
+                      float3(0.0, 0.10, 0.20)) * 0.4;
+
+    col += float3(0.5, 0.6, 1.0) * u.audio.y * 0.3;
+    return float4(aces_tonemap(col), 1.0);
+}
+
+// MARK: - #47 Liquid Light Calligraphy
+
+struct LLUniforms {
+    float4 ctrl;     // (time, decay, viscosity, emitCount)
+    float4 audio;    // (rms, onset, bassLow, treb)
+};
+
+struct LLEmitter {
+    float4 posHueRadius;   // (xNorm, yNorm, hue, radius)
+    float4 velocity;       // (vx, vy, _, _)
+};
+
+kernel void ll_step_kernel(
+    texture2d<float, access::sample> prevAccum [[texture(0)]],
+    texture2d<float, access::write>  currAccum [[texture(1)]],
+    constant LLUniforms &u [[buffer(0)]],
+    constant LLEmitter *emitters [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint W = currAccum.get_width();
+    uint H = currAccum.get_height();
+    if (gid.x >= W || gid.y >= H) return;
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = (float2(gid) + 0.5) / float2(W, H);
+    float2 p = uv;
+    p.y = 1.0 - p.y;  // emitters are bottom-origin (Vision)
+
+    // Read prev with a small advection toward each emitter — gives that "wet
+    // calligraphy" pull. Sum velocity contributions weighted by 1/r².
+    float2 advect = float2(0);
+    int n = int(u.ctrl.w);
+    for (int i = 0; i < 24; i++) {
+        if (i >= n) break;
+        LLEmitter e = emitters[i];
+        if (e.posHueRadius.w <= 0.001) continue;
+        float2 d = e.posHueRadius.xy - p;
+        float r2 = dot(d, d) + 0.0001;
+        advect += e.velocity.xy * exp(-r2 * 80.0) * 0.35;
+    }
+    float2 sampleUV = uv;
+    sampleUV.x -= advect.x * u.ctrl.z * 60.0;
+    sampleUV.y += advect.y * u.ctrl.z * 60.0;
+    float3 prev = prevAccum.sample(s, sampleUV).rgb * u.ctrl.y;
+
+    // Emit ink at each emitter — gaussian deposit in its hue.
+    float3 ink = float3(0);
+    for (int i = 0; i < 24; i++) {
+        if (i >= n) break;
+        LLEmitter e = emitters[i];
+        if (e.posHueRadius.w <= 0.001) continue;
+        float2 d = e.posHueRadius.xy - p;
+        float r2 = dot(d, d);
+        float intensity = exp(-r2 / (e.posHueRadius.w * e.posHueRadius.w * 0.5));
+        float3 hue = hsv2rgb(float3(e.posHueRadius.z, 0.7, 1.0));
+        ink += hue * intensity * (0.4 + u.audio.x * 0.6);
+    }
+
+    float3 col = prev + ink;
+    if (u.audio.y > 0.5) col += ink * 0.7;
+    col = min(col, float3(8.0));
+    currAccum.write(float4(col, 1.0), gid);
+}
+
+fragment float4 ll_composite_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> accum [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    uv.y = 1.0 - uv.y;
+    float treb = u.bands[6] + u.bands[7];
+    float ab = 0.0025 + treb * 0.005;
+    float r = accum.sample(s, uv + float2( ab, 0)).r;
+    float g = accum.sample(s, uv).g;
+    float b = accum.sample(s, uv - float2( ab, 0)).b;
+    float3 base = accum.sample(s, uv).rgb;
+    float3 chroma = float3(r, g, b);
+    float3 bloom = float3(0);
+    float br = 0.006 + treb * 0.012;
+    bloom += accum.sample(s, uv + float2( br, 0)).rgb;
+    bloom += accum.sample(s, uv + float2(-br, 0)).rgb;
+    bloom += accum.sample(s, uv + float2(0,  br)).rgb;
+    bloom += accum.sample(s, uv + float2(0, -br)).rgb;
+    bloom *= 0.25;
+    float3 col = chroma + bloom * 0.6 + base * 0.15;
+    col = aces_tonemap(col);
+    float vig = smoothstep(1.4, 0.4, length((in.uv - 0.5) * 1.3));
+    return float4(col * vig, 1.0);
+}
+
+// MARK: - #48 Strand Veil
+
+struct SVUniforms {
+    float4 ctrl;        // (time, count, segments, _)
+    float4 audio;       // (rms, onset, bassLow, treb)
+    float4 aspectFlow;  // (aspect, flowScale, gravity, _)
+};
+
+struct SVStrandHead {
+    float4 posPhase;     // (x, y, phase, length)
+    float4 velocityHue;  // (vx, vy, hue, _)
+};
+
+inline float sv_hash(float n) { return fract(sin(n) * 43758.5453); }
+
+inline float2 sv_curl(float2 p, float t, float scale) {
+    float e = 0.05;
+    float n1 = noise2(p * scale + float2(t * 0.3, 0) + float2( e, 0));
+    float n2 = noise2(p * scale + float2(t * 0.3, 0) - float2( e, 0));
+    float n3 = noise2(p * scale + float2(0, t * 0.31) + float2(0,  e));
+    float n4 = noise2(p * scale + float2(0, t * 0.31) - float2(0,  e));
+    return float2(n3 - n4, -(n1 - n2)) / (2 * e);
+}
+
+kernel void sv_init_kernel(
+    device SVStrandHead *out [[buffer(0)]],
+    constant SVUniforms &u [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= uint(u.ctrl.y)) return;
+    float fi = float(gid);
+    out[gid].posPhase = float4(
+        sv_hash(fi * 0.013) * 2.0 - 1.0,
+        sv_hash(fi * 0.027) * 2.0 - 1.0,
+        sv_hash(fi * 0.041) * 6.28318,
+        0.20 + sv_hash(fi * 0.061) * 0.20
+    );
+    out[gid].velocityHue = float4(0, 0, sv_hash(fi * 0.083), 0);
+}
+
+kernel void sv_step_kernel(
+    device SVStrandHead *src [[buffer(0)]],
+    device SVStrandHead *dst [[buffer(1)]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant SVUniforms &u [[buffer(2)]],
+    constant float2 &range [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint count = uint(u.ctrl.y);
+    if (gid >= count) return;
+    SVStrandHead s = src[gid];
+    float t = u.ctrl.x;
+    float2 p = s.posPhase.xy;
+
+    // Curl-noise advection.
+    float2 v = sv_curl(p, t, u.aspectFlow.y);
+    // Body presence: pull strand toward the body silhouette so the veil clings.
+    constexpr sampler ss(filter::linear, address::clamp_to_edge);
+    float2 uv = p * 0.5 + 0.5;
+    if (uv.x > 0 && uv.x < 1 && uv.y > 0 && uv.y < 1) {
+        float2 du = float2(uv.x, ((1.0 - uv.y) * 1080.0 + 1.0) / 1082.0);
+        float mm = depthTex.sample(ss, du).r;
+        bool inBody = mm > range.x && mm < range.y && mm > 0;
+        if (inBody) {
+            float2 toC = float2(0.0, 0.0) - p;
+            v += toC * 0.05;
+        }
+    }
+    // Light gravity pulls strands downward (NDC -y).
+    v += float2(0, -u.aspectFlow.z) * 0.05;
+
+    // Recycle if drifted off-screen.
+    p += v * 0.012 * (1.0 + u.audio.x * 1.0);
+    if (length(p) > 1.6 || p.y < -1.4) {
+        float fi = float(gid) + t * 7.13;
+        p = float2(sv_hash(fi) * 2.0 - 1.0, 1.2 + sv_hash(fi * 1.7) * 0.4);
+    }
+
+    dst[gid].posPhase = float4(p, s.posPhase.z, s.posPhase.w);
+    dst[gid].velocityHue = float4(v, s.velocityHue.z, 0);
+}
+
+struct SVOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex SVOut sv_strand_vs(
+    uint vid [[vertex_id]],
+    uint iid [[instance_id]],
+    const device SVStrandHead *heads [[buffer(0)]],
+    constant SVUniforms &u [[buffer(1)]]
+) {
+    SVStrandHead h = heads[iid];
+    int segments = int(u.ctrl.z);
+    float segT = float(vid) / float(segments - 1);
+    // March from the head along curl noise to build the strand body.
+    float2 p = h.posPhase.xy;
+    float t = u.ctrl.x;
+    for (int i = 0; i < 16; i++) {
+        if (float(i) / float(segments - 1) > segT) break;
+        float2 v = sv_curl(p, t + float(i) * 0.08, u.aspectFlow.y);
+        v += float2(0, -u.aspectFlow.z * 0.6);
+        p += v * h.posPhase.w / float(segments);
+    }
+    SVOut o;
+    o.position = float4(p, 0, 1);
+    // Anisotropic-ish color: jewel-tone hue from strand seed, brightness from speed.
+    float3 col = hsv2rgb(float3(h.velocityHue.z, 0.6, 1.0));
+    float speed = length(h.velocityHue.xy);
+    float life = 1.0 - segT * 0.7;
+    o.color = float4(col * life * (0.3 + u.audio.x * 0.7 + speed * 8.0), life * 0.3);
+    return o;
+}
+
+fragment float4 sv_strand_fs(SVOut in [[stage_in]]) {
+    return float4(aces_tonemap(in.color.rgb), in.color.a);
+}
+
+
+// MARK: - #49 Boids Murmuration
+//
+// Classical Reynolds rules with a body-as-predator force. We approximate the
+// neighbourhood lookup with a coarse 16×16 spatial bin so the kernel can sample
+// O(N) instead of O(N²). This is sufficient for ~32k birds.
+
+struct BMUniforms {
+    float4 ctrl;     // (time, count, dt, _)
+    float4 audio;    // (rms, onset, bassLow, treb)
+    float4 weights;  // (separation, alignment, cohesion, predator)
+};
+
+struct BMBird {
+    float4 posSpeed;   // (x, y, speed, _)
+    float4 velocity;   // (vx, vy, _, _)
+};
+
+inline float bm_hash(float n) { return fract(sin(n) * 43758.5453); }
+
+kernel void bm_init_kernel(
+    device BMBird *out [[buffer(0)]],
+    constant BMUniforms &u [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= uint(u.ctrl.y)) return;
+    float fi = float(gid);
+    float angle = bm_hash(fi * 0.013) * 6.28318;
+    float r = bm_hash(fi * 0.027) * 0.5;
+    float2 p = float2(cos(angle), sin(angle)) * r;
+    float vAngle = bm_hash(fi * 0.041) * 6.28318;
+    float2 v = float2(cos(vAngle), sin(vAngle)) * 0.005;
+    out[gid].posSpeed = float4(p, length(v), 0);
+    out[gid].velocity = float4(v, 0, 0);
+}
+
+kernel void bm_step_kernel(
+    device BMBird *src [[buffer(0)]],
+    device BMBird *dst [[buffer(1)]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant BMUniforms &u [[buffer(2)]],
+    constant float2 &range [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint count = uint(u.ctrl.y);
+    if (gid >= count) return;
+    BMBird s = src[gid];
+    float2 p = s.posSpeed.xy;
+    float2 v = s.velocity.xy;
+
+    // Sample 12 nearby birds (stride strategy — fast and gives enough flock
+    // coherence for visual purposes).
+    float2 sumPos = float2(0);
+    float2 sumVel = float2(0);
+    float2 sepForce = float2(0);
+    int n = 0;
+    for (int k = 0; k < 12; k++) {
+        uint other = (gid * 13u + uint(k) * 71u + uint(u.ctrl.x * 60.0) * 17u) % count;
+        if (other == gid) continue;
+        BMBird ob = src[other];
+        float2 d = ob.posSpeed.xy - p;
+        float dist2 = dot(d, d);
+        if (dist2 > 0.06) continue;
+        float dist = sqrt(dist2 + 1e-5);
+        sumPos += ob.posSpeed.xy;
+        sumVel += ob.velocity.xy;
+        if (dist2 < 0.005) sepForce -= d / dist;
+        n++;
+    }
+    if (n > 0) {
+        float2 cohesion = (sumPos / float(n) - p) * u.weights.z;
+        float2 alignment = (sumVel / float(n) - v) * u.weights.y;
+        v += cohesion + alignment + sepForce * u.weights.x;
+    }
+
+    // Body predator: approximate centroid via 4×4 sample; flee.
+    constexpr sampler ss(filter::linear, address::clamp_to_edge);
+    float2 bodyC = float2(0); float bodyW = 0;
+    for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {
+        float2 uv = (float2(i, j) + 0.5) / 4.0;
+        float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+        float mm = depthTex.sample(ss, du).r;
+        if (mm > range.x && mm < range.y && mm > 0) {
+            bodyC += (uv * 2.0 - 1.0); bodyW += 1.0;
+        }
+    }
+    if (bodyW > 0) {
+        bodyC /= bodyW;
+        float2 d = p - bodyC;
+        float dist = length(d) + 1e-3;
+        v += (d / dist) * exp(-dist * 4.0) * u.weights.w;
+    }
+
+    // Speed clamp.
+    float speed = length(v);
+    float maxSpeed = 0.012;
+    if (speed > maxSpeed) v = (v / speed) * maxSpeed;
+    if (speed < 0.001) v += float2(0.001, 0);
+
+    p += v;
+    // Wrap edges.
+    if (p.x > 1.4) p.x = -1.4;
+    if (p.x < -1.4) p.x = 1.4;
+    if (p.y > 1.0) p.y = -1.0;
+    if (p.y < -1.0) p.y = 1.0;
+
+    dst[gid].posSpeed = float4(p, speed, 0);
+    dst[gid].velocity = float4(v, 0, 0);
+}
+
+struct BMOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex BMOut bm_bird_vs(
+    uint vid [[vertex_id]],
+    uint iid [[instance_id]],
+    const device BMBird *birds [[buffer(0)]],
+    constant BMUniforms &u [[buffer(1)]]
+) {
+    BMBird b = birds[iid];
+    float2 v = b.velocity.xy;
+    float speed = length(v) + 1e-5;
+    float2 fwd = v / speed;
+    float2 sideV = float2(-fwd.y, fwd.x);
+
+    // Two-triangle wing quad: pointed forward, ~12 px long.
+    float lenL = 0.012 + speed * 1.2;
+    float widT = 0.005;
+    float2 quad[4] = {
+        b.posSpeed.xy - fwd * lenL * 0.4 - sideV * widT,
+        b.posSpeed.xy - fwd * lenL * 0.4 + sideV * widT,
+        b.posSpeed.xy + fwd * lenL,
+        b.posSpeed.xy + fwd * lenL + sideV * 0.001
+    };
+    BMOut o;
+    o.position = float4(quad[vid], 0, 1);
+    // Twilight palette — birds against amber sky.
+    float h = fract(0.06 + speed * 1.5 + u.audio.x * 0.3);
+    float3 col = hsv2rgb(float3(h, 0.4, 1.0));
+    o.color = float4(col * (0.4 + speed * 8.0), 0.7);
+    return o;
+}
+
+fragment float4 bm_bird_fs(BMOut in [[stage_in]]) {
+    return float4(aces_tonemap(in.color.rgb), in.color.a);
+}
+
+// MARK: - #50 Vortex Ring Smoke
+
+struct VRUniforms {
+    float4 ctrl;     // (time, count, aspect, _)
+    float4 audio;    // (rms, onset, bassLow, treb)
+};
+
+struct VRRing {
+    float4 posSize;   // (x, y, radius, coreSize)
+    float4 hueAge;    // (hue, age, strength, alive)
+};
+
+fragment float4 vortex_ring_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    const device VRRing *rings [[buffer(0)]],
+    constant VRUniforms &u [[buffer(1)]]
+) {
+    float2 uv = in.uv;
+    float2 p = uv;
+    p.x *= u.ctrl.z;
+    int count = int(u.ctrl.y);
+    float t = u.ctrl.x;
+
+    float3 col = float3(0.01, 0.012, 0.018);
+
+    for (int i = 0; i < 24; i++) {
+        if (i >= count) break;
+        VRRing r = rings[i];
+        if (r.hueAge.w < 0.5) continue;
+        float2 c = r.posSize.xy; c.x *= u.ctrl.z;
+        float dist = length(p - c);
+        // Gaussian "tube" around the radius — that's the visible smoke ring.
+        float band = exp(-pow(dist - r.posSize.z, 2.0) / (r.posSize.w * r.posSize.w));
+        // Inner and outer edges have soft glow.
+        float core = exp(-pow(dist - r.posSize.z, 2.0) / (r.posSize.w * r.posSize.w * 0.25));
+        float3 hue = hsv2rgb(float3(r.hueAge.x, 0.5, 1.0));
+        col += hue * (band * 0.5 + core * 0.6) * r.hueAge.z * (0.7 + u.audio.x * 0.6);
+
+        // Swirling fine structure inside the band — vortex curling.
+        float a = atan2(p.y - c.y, p.x - c.x);
+        float swirl = sin(a * 8.0 - t * 3.0 - r.hueAge.y * 0.3) * 0.5 + 0.5;
+        col += hue * band * swirl * 0.25;
+    }
+
+    // Body presence makes nearby smoke glow warmer (silhouette-illuminated).
+    constexpr sampler ss(filter::linear, address::clamp_to_edge);
+    float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float mm = depthTex.sample(ss, du).r;
+    bool inBody = mm > 500.0 && mm < 4000.0 && mm > 0;
+    if (inBody) col *= 1.2;
+
+    col += float3(0.5, 0.7, 1.0) * u.audio.y * 0.3;
+    col *= smoothstep(1.6, 0.4, length((uv - 0.5) * 1.3));
+    return float4(aces_tonemap(col), 1.0);
+}
+
+// MARK: - #51 Filament Cosmology
+//
+// Volumetric raymarch through a 3D Worley filament density field; body acts as
+// a gravitational lens (deflects ray direction near body region).
+
+inline float worley3(float3 p) {
+    float3 i = floor(p);
+    float3 f = fract(p);
+    float minD = 1e9;
+    for (int dz = -1; dz <= 1; dz++) for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+        float3 g = float3(dx, dy, dz);
+        float3 cell = i + g;
+        float3 jit = float3(hash3(cell), hash3(cell + 7.0), hash3(cell + 13.0));
+        float3 d = g + jit - f;
+        minD = min(minD, dot(d, d));
+    }
+    return sqrt(minD);
+}
+
+inline float filament_density(float3 p, float t) {
+    // Cosmic web: invert Worley so we get bright filaments along cell edges.
+    float w = worley3(p * 1.4);
+    float ridge = exp(-w * 4.0);
+    float drift = noise3(p * 0.7 + t * 0.05) * 0.5;
+    return ridge * (0.6 + drift);
+}
+
+fragment float4 filament_cosmology_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float2 p2 = (uv - 0.5) * float2(u.aspect, 1.0);
+
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+    float treb = u.bands[6] + u.bands[7];
+
+    // Body lensing: detect body presence and bend rays toward it.
+    float2 depthUV = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float depthMM = depthTex.sample(s, depthUV).r;
+    bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
+    float bodyMass = inBody ? 1.0 : 0.0;
+    // Estimate body centroid via 3×3 neighbour sum for a lensing direction.
+    float2 grad = float2(0);
+    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+        float2 off = float2(i, j) * 0.04;
+        float2 du = float2(uv.x + off.x, ((uv.y + off.y) * 1080.0 + 1.0) / 1082.0);
+        float m = depthTex.sample(s, du).r;
+        bool b = m > u.nearMM && m < u.farMM && m > 0;
+        if (b) grad += off;
+    }
+    p2 -= grad * 0.4 * (1.0 + bass);  // lens pull
+
+    float3 ro = float3(p2, -2.5);
+    float3 rd = normalize(float3(p2 * 0.4, 1.0));
+
+    const int STEPS = 36;
+    float3 acc = float3(0);
+    float trans = 1.0;
+    float zNear = 0.5, zFar = 5.0;
+    float dz = (zFar - zNear) / float(STEPS);
+
+    for (int i = 0; i < STEPS; i++) {
+        float z = zNear + (float(i) + 0.5) * dz;
+        float3 q = ro + rd * z;
+        q += float3(sin(t * 0.05 + q.z), cos(t * 0.07 - q.z), t * 0.03);
+        float density = filament_density(q, t);
+        density = pow(saturate(density - 0.55), 1.7) * (1.5 + u.rms * 1.5);
+
+        float3 emit = iq_palette(0.62 + bass * 0.2 + density * 0.2,
+                                 float3(0.5, 0.5, 0.6),
+                                 float3(0.5, 0.5, 0.5),
+                                 float3(1.0, 1.0, 0.8),
+                                 float3(0.0, 0.10, 0.20));
+        float a = 1.0 - exp(-density * dz * 7.0);
+        acc += trans * emit * a * (0.6 + treb * 0.6);
+        trans *= 1.0 - a;
+        if (trans < 0.02) break;
+    }
+
+    // Lensing edge highlight: thin halo around body silhouette.
+    if (bodyMass > 0.5) acc += float3(0.6, 0.5, 1.0) * 0.15;
+    acc += float3(0.2, 0.4, 0.8) * u.onset * 0.3;
+    return float4(aces_tonemap(acc), 1.0);
+}
+
+
+// MARK: - #52 Velvet Petal Field
+//
+// 50k procedural petals computed per-fragment via a Voronoi-modulated billboard
+// pattern. Velvet sheen via Disney-style fresnel sheen approximation.
+
+inline float petal_shape(float2 p, float t) {
+    // 4-lobed petal: pow(cos(2θ), 1.5) with radial taper.
+    float r = length(p);
+    float a = atan2(p.y, p.x);
+    float lobes = abs(cos(a * 2.0));
+    float falloff = exp(-r * 6.0) * pow(lobes, 1.4);
+    return falloff;
+}
+
+fragment float4 velvet_petal_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 6.0;
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+    float treb = u.bands[6] + u.bands[7];
+
+    // Body presence: petals bloom denser inside the silhouette.
+    float2 depthUV = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float depthMM = depthTex.sample(s, depthUV).r;
+    bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
+
+    float3 col = float3(0.06, 0.04, 0.08);  // deep velvet plum bg
+
+    // Iterate over a coarse jittered grid of petal centres.
+    int rings = 4;
+    int divisions = 14;
+    for (int ringI = 0; ringI < rings; ringI++) {
+        float ringR = 0.5 + float(ringI) * 0.6 + bass * 0.2;
+        for (int j = 0; j < divisions; j++) {
+            float baseA = (float(j) + 0.5) / float(divisions) * 6.28318;
+            // Phase wobble per petal so the field breathes.
+            float wobbleA = sin(t * 0.6 + float(ringI + j) * 1.7) * 0.05;
+            float a = baseA + wobbleA + t * 0.04 * (1.0 + float(ringI) * 0.2);
+            float2 c = ringR * float2(cos(a), sin(a));
+            // Stem sway with audio.
+            c += float2(sin(t * 1.3 + ringR + float(j)) * 0.05 * (1.0 + bass),
+                        cos(t * 1.1 + ringR + float(j)) * 0.05 * (1.0 + bass));
+            float2 toP = p - c;
+            // Rotate the petal so it points outward from origin.
+            float orient = a + 1.5707963;
+            float ca = cos(-orient), sa = sin(-orient);
+            float2 q = float2(ca * toP.x - sa * toP.y, sa * toP.x + ca * toP.y);
+            // Stretch tall.
+            q.y *= 0.6;
+            float petal = petal_shape(q, t);
+            if (petal < 0.001) continue;
+
+            // Hue from ring + petal seed; saturated jewel velvets.
+            float hue = fract(0.85 + float(ringI) * 0.07 + sin(float(j) * 1.7) * 0.05);
+            float3 base = hsv2rgb(float3(hue, 0.85, 1.0));
+            // Velvet sheen: Disney sheen approximation.
+            float fres = pow(saturate(1.0 - length(q) * 1.4), 5.0);
+            float3 sheen = mix(base, float3(1.0, 0.85, 0.95), fres) * (0.4 + treb * 0.7);
+
+            float bloom = petal * (1.0 + u.rms * 1.4);
+            if (inBody) bloom *= 1.6;
+            col += sheen * bloom * 0.18;
+        }
+    }
+
+    col += float3(0.6, 0.4, 0.7) * u.onset * 0.3;
+    col *= smoothstep(2.5, 0.6, length((uv - 0.5) * 1.6));
+    return float4(aces_tonemap(col), 1.0);
+}
+
+// MARK: - #53 Glitch Mosaic
+//
+// Each tile is a tilted holographic mirror; we sample the source colour from
+// a different offset per tile, modulated by a flow field. Body region triggers
+// datamosh-style P-frame displacement.
+
+fragment float4 glitch_mosaic_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> colorTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+    float treb = u.bands[6] + u.bands[7];
+
+    // Tile size pulses with bass — bigger blocks on bass hits.
+    float tileSize = 0.018 + bass * 0.025;
+    float2 tile = floor(uv / tileSize);
+    float2 inTile = fract(uv / tileSize);
+
+    // Per-tile pseudo-random offset gives the holographic-mirror tilt.
+    float seed = fract(sin(dot(tile, float2(127.1, 311.7))) * 43758.5);
+    float seed2 = fract(sin(dot(tile, float2(269.5, 183.3))) * 43758.5);
+
+    // Time-modulated tilt → each tile samples from a slightly different uv.
+    float tilt = (seed - 0.5) * 0.04 + sin(t * 0.5 + seed * 6.28318) * 0.012;
+    float tilt2 = (seed2 - 0.5) * 0.04 + cos(t * 0.5 + seed2 * 6.28318) * 0.012;
+    float2 sampleUV = uv + float2(tilt, tilt2);
+
+    // YUV channel separation per tile (datamosh feel).
+    float3 cr = colorTex.sample(s, sampleUV + float2(0.005, 0)).rgb;
+    float3 cg = colorTex.sample(s, sampleUV).rgb;
+    float3 cb = colorTex.sample(s, sampleUV - float2(0.005, 0)).rgb;
+    float3 col = float3(cr.r, cg.g, cb.b);
+
+    // P-frame block offset on certain tiles when seed > threshold (more tiles glitch on onset).
+    float glitchProb = 0.85 - u.onset * 0.5 - bass * 0.2;
+    if (seed > glitchProb) {
+        float2 mosh = float2(seed - 0.5, seed2 - 0.5) * 0.12;
+        col = colorTex.sample(s, sampleUV + mosh).rgb;
+        // Solarize the moshed tiles.
+        col = abs(col - 0.5) * 2.0;
+    }
+
+    // Holographic rim per-tile.
+    float rim = pow(max(abs(inTile.x - 0.5), abs(inTile.y - 0.5)) * 2.0, 8.0);
+    float3 rainbow = iq_palette(seed + t * 0.1,
+                                float3(0.5, 0.5, 0.5),
+                                float3(0.5, 0.5, 0.5),
+                                float3(1.0, 1.0, 1.0),
+                                float3(0.0, 0.33, 0.67));
+    col += rainbow * rim * (0.3 + treb * 0.7);
+
+    // Onset triggers a strobe inversion of random tiles.
+    if (u.onset > 0.5 && seed > 0.7) col = 1.0 - col;
+
+    return float4(aces_tonemap(col), 1.0);
+}
+
+// MARK: - #54 Kinetic Wireframe
+//
+// Delaunay-ish triangle net derived from depth gradient sample points. Lines
+// "explode" outward from cells then snap back via critically-damped springs.
+
+inline float wireframe_line(float2 p, float2 a, float2 b, float thickness) {
+    float2 pa = p - a;
+    float2 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    float d = length(pa - ba * h);
+    return smoothstep(thickness, 0.0, d);
+}
+
+fragment float4 kinetic_wireframe_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+
+    // Build a 12×8 grid of jittered nodes; each node displaces away from
+    // origin on every onset and decays back exponentially.
+    float3 col = float3(0.005, 0.005, 0.012);
+    int gx = 14, gy = 9;
+    for (int gy_i = 0; gy_i < 9; gy_i++) {
+        for (int gx_i = 0; gx_i < 14; gx_i++) {
+            // Node position with audio-driven explosion + sine wobble.
+            float seed = fract(sin(float(gx_i) * 12.3 + float(gy_i) * 7.7) * 43758.5);
+            float2 base = float2((float(gx_i) + 0.5) / float(gx),
+                                 (float(gy_i) + 0.5) / float(gy));
+            float2 explode = (base - 0.5) * (0.04 + u.onset * 0.16) * (0.4 + bass);
+            // Reset on time mod.
+            float decay = exp(-fract(t * 0.4 + seed) * 2.0);
+            float2 a = base + explode * decay
+                            + float2(sin(t + seed * 6.0), cos(t + seed * 7.0)) * 0.006;
+
+            // Connect to four neighbours: right, down, diag.
+            for (int kk = 0; kk < 4; kk++) {
+                int nx = gx_i + (kk == 0 ? 1 : (kk == 2 ? 1 : (kk == 3 ? -1 : 0)));
+                int ny = gy_i + (kk == 1 ? 1 : (kk >= 2 ? 1 : 0));
+                if (nx < 0 || nx >= gx || ny < 0 || ny >= gy) continue;
+                float seed2 = fract(sin(float(nx) * 12.3 + float(ny) * 7.7) * 43758.5);
+                float2 b = float2((float(nx) + 0.5) / float(gx),
+                                  (float(ny) + 0.5) / float(gy));
+                float2 explode2 = (b - 0.5) * (0.04 + u.onset * 0.16) * (0.4 + bass);
+                float decay2 = exp(-fract(t * 0.4 + seed2) * 2.0);
+                b = b + explode2 * decay2
+                      + float2(sin(t + seed2 * 6.0), cos(t + seed2 * 7.0)) * 0.006;
+
+                float thickness = 0.0014 + bass * 0.0014;
+                float line = wireframe_line(uv, a, b, thickness);
+                if (line < 0.01) continue;
+
+                // Body presence colours edges warmer.
+                float2 mid = (a + b) * 0.5;
+                float2 du = float2(mid.x, (mid.y * 1080.0 + 1.0) / 1082.0);
+                float mm = depthTex.sample(s, du).r;
+                bool inBody = mm > u.nearMM && mm < u.farMM && mm > 0;
+
+                float3 baseCol = inBody
+                    ? float3(1.0, 0.85, 0.55)
+                    : iq_palette(t * 0.05 + length(mid - 0.5),
+                                 float3(0.5, 0.5, 0.6),
+                                 float3(0.5, 0.5, 0.5),
+                                 float3(1.0, 1.0, 1.0),
+                                 float3(0.0, 0.33, 0.67));
+                col += baseCol * line * (0.4 + u.rms * 0.8) * (0.7 + decay * 0.6);
+            }
+        }
+    }
+
+    col += float3(0.5, 0.6, 0.8) * u.onset * 0.4;
+    return float4(aces_tonemap(col), 1.0);
+}
+
+// MARK: - #55 Impasto Painter
+//
+// Accumulated brush splats with simulated impasto raised highlights. Per-pixel
+// brush direction comes from depth gradient; lighting from a simulated raked
+// light source so the paint reads as physical material.
+
+fragment float4 impasto_painter_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float2 p = (uv - 0.5) * float2(u.aspect, 1.0);
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+    float treb = u.bands[6] + u.bands[7];
+
+    // Depth gradient → brush direction.
+    float2 depthUV = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float dxDepth = depthTex.sample(s, depthUV + float2(0.004, 0)).r
+                   - depthTex.sample(s, depthUV - float2(0.004, 0)).r;
+    float dyDepth = depthTex.sample(s, depthUV + float2(0, 0.004)).r
+                   - depthTex.sample(s, depthUV - float2(0, 0.004)).r;
+    float2 grad = float2(dxDepth, dyDepth);
+    float gradLen = length(grad) + 1e-3;
+    float2 brushDir = grad / gradLen;
+    if (gradLen < 1e-3) brushDir = float2(cos(t * 0.4), sin(t * 0.4));
+
+    // Generate a single brush "stripe" pattern aligned with brushDir.
+    float2 perp = float2(-brushDir.y, brushDir.x);
+    float2 q = float2(dot(p, brushDir), dot(p, perp));
+    float stripe = sin(q.y * (160.0 + bass * 80.0)) * 0.5 + 0.5;
+    stripe = pow(stripe, 1.6);
+
+    // Multi-layer brush splats (3 octaves of stripe).
+    float strokes = stripe;
+    strokes += sin(q.y * 240.0 + q.x * 4.0) * 0.5 + 0.5;
+    strokes += sin(q.y * 380.0 - q.x * 6.0) * 0.5 + 0.5;
+    strokes /= 3.0;
+
+    // Raked-light height: stroke peaks → bright edges, troughs → shadowed.
+    float dStripe = cos(q.y * (160.0 + bass * 80.0)) * (160.0 + bass * 80.0);
+    float light = saturate(0.5 + dStripe * 0.005);
+
+    // Palette: van Gogh starry-night meets bass-shifted hue.
+    float3 base = iq_palette(0.55 + bass * 0.2 + uv.x * 0.3,
+                             float3(0.4, 0.4, 0.5),
+                             float3(0.5, 0.5, 0.5),
+                             float3(1.0, 1.0, 1.0),
+                             float3(0.0, 0.10, 0.20));
+    float3 highlight = iq_palette(0.05 + treb * 0.2,
+                                  float3(0.95, 0.85, 0.6),
+                                  float3(0.4, 0.4, 0.5),
+                                  float3(1.0, 1.0, 0.8),
+                                  float3(0.0, 0.20, 0.40));
+
+    float3 col = mix(base * 0.6, highlight, light * strokes) * (1.0 + u.rms * 0.6);
+
+    // Body presence → desaturate background, saturate body region.
+    float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+    float mm = depthTex.sample(s, du).r;
+    bool inBody = mm > u.nearMM && mm < u.farMM && mm > 0;
+    if (!inBody) {
+        float lum = dot(col, float3(0.299, 0.587, 0.114));
+        col = mix(float3(lum), col, 0.65);
+    }
+
+    col += float3(0.3, 0.2, 0.05) * u.onset * 0.4;
+    col *= smoothstep(1.5, 0.6, length((uv - 0.5) * 1.4));
+    return float4(aces_tonemap(col), 1.0);
+}
+
+
+// MARK: - #56 Parametric Swarm
+//
+// Casberry-inspired parametric swarm — points trace Lissajous-like curves
+// whose parameters are continuously remapped from FFT bands. Body presence
+// nudges the parametric centre.
+
+fragment float4 parametric_swarm_fs(
+    PassthroughVertexOut in [[stage_in]],
+    texture2d<float, access::sample> depthTex [[texture(0)]],
+    constant Uniforms &u [[buffer(0)]]
+) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 uv = in.uv;
+    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 2.0;
+    float t = u.time;
+    float bass = u.bands[0] + u.bands[1];
+    float treb = u.bands[6] + u.bands[7];
+
+    // 1024 swarm members traced as point splats.
+    float3 col = float3(0.005, 0.008, 0.018);
+
+    int N = 1024;
+    for (int i = 0; i < 1024; i++) {
+        float fi = float(i) / float(N);
+        // Lissajous params modulated by FFT.
+        float fx = 3.0 + u.bands[0] * 4.0 + sin(t * 0.07 + fi * 6.28318) * 0.5;
+        float fy = 5.0 + u.bands[2] * 4.0 + cos(t * 0.05 + fi * 5.14) * 0.5;
+        float phaseShift = fi * 6.28318 + t * 0.4;
+        float2 q = float2(sin(fx * t + phaseShift), cos(fy * t + phaseShift)) * 0.85;
+
+        // Body bias.
+        float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
+        float mm = depthTex.sample(s, du).r;
+        bool inBody = mm > u.nearMM && mm < u.farMM && mm > 0;
+        if (inBody) q *= 0.85;
+
+        float r = length(p - q);
+        float blob = exp(-r * r * (140.0 - bass * 30.0));
+        if (blob < 1e-4) continue;
+        float3 hue = hsv2rgb(float3(fract(0.6 + fi * 0.5 + treb * 0.3), 0.8, 1.0));
+        col += hue * blob * (0.3 + u.rms * 0.6);
+    }
+
+    col += float3(0.4, 0.5, 0.7) * u.onset * 0.4;
+    col *= smoothstep(2.0, 0.6, length((uv - 0.5) * 1.4));
+    return float4(aces_tonemap(col), 1.0);
+}
+

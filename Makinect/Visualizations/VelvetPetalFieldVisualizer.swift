@@ -1,16 +1,16 @@
-// ParametricSwarmVisualizer — see corresponding shader in Shaders.metal for the per-pixel
+// VelvetPetalFieldVisualizer — see corresponding shader in Shaders.metal for the per-pixel
 // composite. Swift driver is intentionally thin so the shader carries the artistic load.
 
 import Metal
 import MetalKit
 
 @MainActor
-final class ParametricSwarmVisualizer: Visualizer {
+final class VelvetPetalFieldVisualizer: Visualizer {
     private let pipeline: MTLRenderPipelineState
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = library.makeFunction(name: "passthrough_vs")
-        desc.fragmentFunction = library.makeFunction(name: "parametric_swarm_fs")
+        desc.fragmentFunction = library.makeFunction(name: "velvet_petal_fs")
         desc.colorAttachments[0].pixelFormat = colorPixelFormat
         desc.depthAttachmentPixelFormat = .depth32Float
         guard let pso = try? device.makeRenderPipelineState(descriptor: desc) else { return nil }
