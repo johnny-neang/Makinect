@@ -149,7 +149,8 @@ struct MetalKinectView: NSViewRepresentable {
                 skeletons: manager.poseDetector.skeletons,
                 timeSeconds: timeSeconds,
                 segmentationNearMM: manager.segmentationNearMM,
-                segmentationFarMM: manager.segmentationFarMM
+                segmentationFarMM: manager.segmentationFarMM,
+                parametricSwarm: manager.parametricSwarm
             )
 
             viz.draw(in: view, encoder: encoder, inputs: inputs)

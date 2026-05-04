@@ -2555,6 +2555,9 @@ struct PSWUniforms {
     float4 bandsHi;       // bands[4..7]
     float4 bodyAttract;   // (cx, cy, cz, strength)  — strength=0 → no body
     float4 palette;       // (baseHue, hueSpread, sat, val)
+    float4 userParams;    // (formationOverride, audioReactivity, glowIntensity, _)
+                          //  formationOverride: -1 = auto-cycle via morphPhase;
+                          //                     0..7 = lock to a specific mode.
 };
 
 struct PSWParticle {
@@ -2626,6 +2629,48 @@ inline float3 psw_lissajous(float i, float n, float t) {
                   sin(c * s + ph * 0.7)  * 0.65);
 }
 
+inline float3 psw_galaxy(float i, float n, float t) {
+    // 3-arm logarithmic spiral. Arms rotate over time; disc thickness = small
+    // vertical jitter that grows with radius.
+    const int armCount = 3;
+    int arm = int(i) % armCount;
+    float along = floor(i / float(armCount)) / max(1.0, n / float(armCount));
+    float radius = along;
+    float angOffset = float(arm) * 6.2831853 / float(armCount);
+    // Logarithmic wind — tightens toward the centre, opens up at the rim.
+    float wind = log(radius * 4.0 + 1.0) * 4.0 + t * 0.30;
+    float ang = wind + angOffset;
+    float thicknessSeed = hash21(float2(i, 1.7));
+    float y = (thicknessSeed - 0.5) * 0.06 * (0.4 + radius);
+    return float3(cos(ang) * radius, y, sin(ang) * radius);
+}
+
+inline float3 psw_orbital(float i, float n, float t) {
+    // sp³ tetrahedral orbital — 4 lobes at the corners of a tetrahedron, each
+    // packed with a Fibonacci-sphere distribution around its centre. Iconic
+    // chemistry-textbook electron-density look.
+    int lobe = int(i) & 3;  // % 4 cheaply
+    float withinLobe = floor(i * 0.25);
+    float lobeN = max(1.0, n * 0.25);
+
+    float3 c0 = normalize(float3( 1,  1,  1)) * 0.60;
+    float3 c1 = normalize(float3( 1, -1, -1)) * 0.60;
+    float3 c2 = normalize(float3(-1,  1, -1)) * 0.60;
+    float3 c3 = normalize(float3(-1, -1,  1)) * 0.60;
+    float3 centre = (lobe == 0) ? c0 :
+                    (lobe == 1) ? c1 :
+                    (lobe == 2) ? c2 : c3;
+
+    // Fibonacci point on a small lobe sphere.
+    float phi = 2.39996323;
+    float yLocal = 1.0 - (withinLobe / max(1.0, lobeN - 1.0)) * 2.0;
+    float rLocal = sqrt(1.0 - yLocal * yLocal);
+    float th = phi * withinLobe;
+    float3 local = float3(cos(th) * rLocal, yLocal, sin(th) * rLocal);
+    float pulse = 0.32 + 0.04 * sin(t * 0.6 + float(lobe) * 1.57);
+    return centre + local * pulse;
+}
+
 inline float3 psw_attractor(float i, float n, float t, float bass) {
     // Aizawa-style strange attractor — each particle samples a stable orbit by
     // (i, t). Bass twists the whole orbit so the attractor breathes with kicks.
@@ -2654,39 +2699,50 @@ kernel void psw_step_kernel(
     float morph = u.ctrl.z;
     float bass = u.audio.z;
     float treb = u.audio.w;
+    float audioRx = u.userParams.y;       // 0 = ignore audio, 1 = full modulation
+    int   override = int(u.userParams.x); // -1 = auto, 0..7 = locked formation
+    const int FORMATION_COUNT = 8;
 
-    // Two adjacent modes — fractional part is the smooth-step morph blend.
-    int modeA = int(floor(morph)) % 6;
-    int modeB = (modeA + 1) % 6;
-    float interp = smoothstep(0.0, 1.0, fract(morph));
+    // Resolve formation (modeA/modeB blend, or single locked mode).
+    int modeA, modeB;
+    float interp;
+    if (override >= 0) {
+        modeA = override;
+        modeB = override;
+        interp = 0.0;
+    } else {
+        modeA = int(floor(morph)) % FORMATION_COUNT;
+        modeB = (modeA + 1) % FORMATION_COUNT;
+        interp = smoothstep(0.0, 1.0, fract(morph));
+    }
+
+    // Lookup table dispatch — keeps both pA and pB resolution under one branch
+    // path so the GPU SIMT lanes stay coherent across the threadgroup.
+    #define PSW_PICK(MODE, OUT)                                          \
+        if      (MODE == 0) OUT = psw_fib_sphere(i, n);                  \
+        else if (MODE == 1) OUT = psw_torus(i, n, bass * audioRx,        \
+                                            treb * audioRx, t);          \
+        else if (MODE == 2) OUT = psw_helix(i, n, t, bass * audioRx,     \
+                                            treb * audioRx);             \
+        else if (MODE == 3) OUT = psw_cube_lattice(i, n);                \
+        else if (MODE == 4) OUT = psw_lissajous(i, n, t);                \
+        else if (MODE == 5) OUT = psw_attractor(i, n, t, bass * audioRx);\
+        else if (MODE == 6) OUT = psw_galaxy(i, n, t);                   \
+        else                OUT = psw_orbital(i, n, t)
 
     float3 pA, pB;
-    {
-        if      (modeA == 0) pA = psw_fib_sphere(i, n);
-        else if (modeA == 1) pA = psw_torus(i, n, bass, treb, t);
-        else if (modeA == 2) pA = psw_helix(i, n, t, bass, treb);
-        else if (modeA == 3) pA = psw_cube_lattice(i, n);
-        else if (modeA == 4) pA = psw_lissajous(i, n, t);
-        else                 pA = psw_attractor(i, n, t, bass);
-    }
-    {
-        if      (modeB == 0) pB = psw_fib_sphere(i, n);
-        else if (modeB == 1) pB = psw_torus(i, n, bass, treb, t);
-        else if (modeB == 2) pB = psw_helix(i, n, t, bass, treb);
-        else if (modeB == 3) pB = psw_cube_lattice(i, n);
-        else if (modeB == 4) pB = psw_lissajous(i, n, t);
-        else                 pB = psw_attractor(i, n, t, bass);
-    }
+    PSW_PICK(modeA, pA);
+    PSW_PICK(modeB, pB);
+    #undef PSW_PICK
 
-    float3 pos = mix(pA, pB, interp);
+    float3 pos = (override >= 0) ? pA : mix(pA, pB, interp);
 
-    // Audio scale — bass swells the swarm.
-    pos *= 1.0 + bass * 0.30 + u.audio.x * 0.18;
+    // Audio modulation — bass swells the swarm, treble jitters per particle.
+    pos *= 1.0 + (bass * 0.30 + u.audio.x * 0.18) * audioRx;
 
-    // Per-particle high-frequency jitter on treble.
     float jSeed = i * 0.000037 + t * 0.5;
     float3 jitter = float3(sin(jSeed * 31.0), sin(jSeed * 53.0), sin(jSeed * 71.0));
-    pos += jitter * (0.005 + treb * 0.020);
+    pos += jitter * (0.005 + treb * 0.020 * audioRx);
 
     // Body attractor — translate the swarm toward the body's COM (when present).
     pos += u.bodyAttract.xyz * u.bodyAttract.w;
@@ -2726,16 +2782,18 @@ vertex PSWVertexOut psw_vs(
     float pump = u.audio.x * 4.0 + u.audio.y * 6.0;
     o.pointSize = clamp(baseSize + pump, 1.5, 12.0);
 
-    // Tight green-centred palette (default baseHue=0.33, spread=0.04).
-    // Bass drifts toward cyan, treble toward yellow — never fully scrambles.
+    // Palette driven entirely by the SidePanel controls (baseHue / hueSpread /
+    // saturation / value), audio-modulated by `audioReactivity` (userParams.y).
     float i = float(vid) / max(1.0, u.ctrl.y);
-    float hueShift = u.audio.z * 0.10 - u.audio.w * 0.05;
+    float audioRx = u.userParams.y;
+    float hueShift = (u.audio.z * 0.10 - u.audio.w * 0.05) * audioRx;
     float hue = fract(u.palette.x + (i - 0.5) * u.palette.y + hueShift);
     // Allow val > 1 — feeds HDR into the additive blend; the fragment's
     // ACES tone-map compresses overdrive into bloom, not clipping.
-    float val = u.palette.w + u.audio.x * 0.40 + u.audio.y * 0.60;
+    float val = u.palette.w + (u.audio.x * 0.40 + u.audio.y * 0.60) * audioRx;
     o.color = hsv2rgb(float3(hue, u.palette.z, val));
-    o.intensity = 1.0;
+    // Glow intensity multiplier — passed through to fragment via `intensity`.
+    o.intensity = u.userParams.z;
     return o;
 }
 

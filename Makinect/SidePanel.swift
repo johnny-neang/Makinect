@@ -186,5 +186,94 @@ struct SidePanel: View {
                     .foregroundStyle(.secondary)
             }
         }
+
+        if manager.visualization == .parametricSwarm {
+            parametricSwarmSection
+        }
+    }
+
+    // — Parametric Swarm controls — Casberry-style knobs for shape, palette,
+    //   density, glow, and Kinect-body integration.
+    @ViewBuilder
+    private var parametricSwarmSection: some View {
+        let cfg = manager.parametricSwarm
+
+        GroupBox("Swarm Shape") {
+            Picker("Formation", selection: Bindable(cfg).formation) {
+                ForEach(SwarmFormation.allCases) { f in
+                    Text(f.label).tag(f)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+        }
+
+        GroupBox("Visual Style") {
+            Picker("Style", selection: Bindable(cfg).style) {
+                ForEach(SwarmStyle.allCases) { s in
+                    Text(s.rawValue).tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+
+        GroupBox("Color") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Hue", value: String(format: "%.2f", cfg.baseHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+
+                LabeledContent("Spread", value: String(format: "%.2f", cfg.hueSpread))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueSpread, in: 0...0.5)
+
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+
+                LabeledContent("Brightness", value: String(format: "%.2f", cfg.value))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).value, in: 0.2...1.6)
+            }
+        }
+
+        GroupBox("Density & Glow") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Particles", value: "\(cfg.particleCount)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.particleCount) },
+                        set: { cfg.particleCount = Int($0) }
+                    ),
+                    in: 1024...65536, step: 1024
+                )
+
+                LabeledContent("Particle Size", value: String(format: "%.1f", cfg.particleSize))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).particleSize, in: 0.5...6.0)
+
+                LabeledContent("Glow Intensity", value: String(format: "%.1f", cfg.glowIntensity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).glowIntensity, in: 0.3...3.0)
+            }
+        }
+
+        GroupBox("Audio & Body") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Audio Reactivity", value: String(format: "%.2f", cfg.audioReactivity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).audioReactivity, in: 0...1.5)
+
+                LabeledContent("Body Attraction", value: String(format: "%.2f", cfg.bodyAttraction))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyAttraction, in: 0...1.5)
+
+                LabeledContent("Rotate Speed", value: String(format: "%.2f", cfg.rotateSpeed))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).rotateSpeed, in: 0...0.6)
+            }
+        }
     }
 }

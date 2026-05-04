@@ -12,6 +12,9 @@ struct VisualizerInputs {
     let timeSeconds: Float
     let segmentationNearMM: Float
     let segmentationFarMM: Float
+    /// Per-visualizer user-controllable settings. Each visualizer reads only
+    /// the fields it needs; unused configs cost nothing.
+    let parametricSwarm: ParametricSwarmConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

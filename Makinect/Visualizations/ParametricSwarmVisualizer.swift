@@ -32,8 +32,10 @@ import simd
 
 @MainActor
 final class ParametricSwarmVisualizer: Visualizer {
-    private static let particleCount = 24 * 1024  // 24,576 — Casberry-density geodesic
-    private static let formationCount: Float = 6
+    /// Maximum particle count the buffer can hold. The active count comes from
+    /// `ParametricSwarmConfig.particleCount` and is clamped to this ceiling.
+    private static let maxParticleCount = 64 * 1024  // 65,536
+    private static let formationCount: Float = 8
 
     private struct PSWParticle {
         var posPad: SIMD4<Float> = .zero
@@ -47,6 +49,7 @@ final class ParametricSwarmVisualizer: Visualizer {
         var bandsHi: SIMD4<Float>
         var bodyAttract: SIMD4<Float>   // (cx, cy, cz, strength)
         var palette: SIMD4<Float>       // (baseHue, hueSpread, sat, val)
+        var userParams: SIMD4<Float>    // (formationOverride, audioReactivity, glowIntensity, _)
     }
 
     private let stepPSO: MTLComputePipelineState
@@ -79,7 +82,7 @@ final class ParametricSwarmVisualizer: Visualizer {
         rdesc.colorAttachments[0].destinationAlphaBlendFactor = .one
         guard let renderPSO = try? device.makeRenderPipelineState(descriptor: rdesc) else { return nil }
 
-        let bytes = MemoryLayout<PSWParticle>.stride * Self.particleCount
+        let bytes = MemoryLayout<PSWParticle>.stride * Self.maxParticleCount
         guard let buf = device.makeBuffer(length: bytes, options: [.storageModePrivate]) else { return nil }
 
         self.stepPSO = stepPSO
@@ -89,15 +92,21 @@ final class ParametricSwarmVisualizer: Visualizer {
 
     func draw(in view: MTKView, encoder: MTLRenderCommandEncoder, inputs: VisualizerInputs) {
         let now = Float(Date().timeIntervalSince(startTime))
+        let cfg = inputs.parametricSwarm
+        let count = max(256, min(Self.maxParticleCount, cfg.particleCount))
 
         // — Onset → debounced morph step. Slow auto-drift covers quiet rooms.
-        if inputs.audio.onset && !lastOnsetWasHigh {
-            morphPhase += 1.0
+        //   Skipped entirely when the user has locked a specific formation
+        //   (cfg.formation != .auto) — morphPhase only matters for the auto cycle.
+        if cfg.formation == .auto {
+            if inputs.audio.onset && !lastOnsetWasHigh {
+                morphPhase += 1.0
+                if morphPhase >= Self.formationCount { morphPhase -= Self.formationCount }
+            }
+            morphPhase += 0.003 + inputs.audio.rms * 0.004 * cfg.audioReactivity
             if morphPhase >= Self.formationCount { morphPhase -= Self.formationCount }
         }
         lastOnsetWasHigh = inputs.audio.onset
-        morphPhase += 0.003 + inputs.audio.rms * 0.004
-        if morphPhase >= Self.formationCount { morphPhase -= Self.formationCount }
 
         let bands = inputs.audio.bands
         func b(_ i: Int) -> Float { bands.indices.contains(i) ? bands[i] : 0 }
@@ -125,12 +134,13 @@ final class ParametricSwarmVisualizer: Visualizer {
         } else {
             bodyStrength = max(0.0, bodyStrength - 0.05)
         }
+        let effectiveBodyStrength = bodyStrength * cfg.bodyAttraction
 
         // — Camera: slow Y-axis orbit; audio.rms nudges the rate.
         let aspect = Float(view.drawableSize.width / max(1, view.drawableSize.height))
-        let yaw = now * 0.18 + inputs.audio.rms * 0.30
+        let yaw = now * cfg.rotateSpeed + inputs.audio.rms * 0.30 * cfg.audioReactivity
         let dist: Float = 2.6
-        let pitch: Float = 0.05  // tiny tilt — matches reference framing
+        let pitch: Float = 0.05
         let eye = SIMD3<Float>(
             sin(yaw) * dist * cos(pitch),
             sin(pitch) * dist,
@@ -142,14 +152,18 @@ final class ParametricSwarmVisualizer: Visualizer {
 
         var u = PSWUniforms(
             viewProj: viewProj,
-            ctrl: SIMD4<Float>(now, Float(Self.particleCount), morphPhase, 3.0),
+            ctrl: SIMD4<Float>(now, Float(count), morphPhase, cfg.particleSize),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
             bandsLow: SIMD4<Float>(b(0), b(1), b(2), b(3)),
             bandsHi:  SIMD4<Float>(b(4), b(5), b(6), b(7)),
-            bodyAttract: SIMD4<Float>(bodyCOM.x, bodyCOM.y, bodyCOM.z, bodyStrength),
-            // Tight green-centred palette: baseHue=0.33 (green), spread=0.04
-            // (subtle variation across particles), sat=0.95, val=0.85.
-            palette: SIMD4<Float>(0.33, 0.04, 0.95, 0.85)
+            bodyAttract: SIMD4<Float>(bodyCOM.x, bodyCOM.y, bodyCOM.z, effectiveBodyStrength),
+            palette: SIMD4<Float>(cfg.baseHue, cfg.hueSpread, cfg.saturation, cfg.value),
+            userParams: SIMD4<Float>(
+                Float(cfg.formation.rawValue),     // -1 = auto, 0..7 = locked
+                cfg.audioReactivity,
+                cfg.glowIntensity,
+                0
+            )
         )
 
         // — Compute pass: writes one position per particle.
@@ -160,7 +174,7 @@ final class ParametricSwarmVisualizer: Visualizer {
             cenc.setBytes(&u, length: MemoryLayout<PSWUniforms>.stride, index: 1)
             let tw = min(stepPSO.threadExecutionWidth, 64)
             let grid = MTLSize(
-                width: (Self.particleCount + tw - 1) / tw,
+                width: (count + tw - 1) / tw,
                 height: 1, depth: 1
             )
             cenc.dispatchThreadgroups(grid, threadsPerThreadgroup: MTLSize(width: tw, height: 1, depth: 1))
@@ -173,7 +187,7 @@ final class ParametricSwarmVisualizer: Visualizer {
         encoder.setRenderPipelineState(renderPSO)
         encoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
         encoder.setVertexBytes(&u, length: MemoryLayout<PSWUniforms>.stride, index: 1)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: Self.particleCount)
+        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: count)
     }
 
     // — Camera matrix helpers — pattern matching VoxelSculptVisualizer /

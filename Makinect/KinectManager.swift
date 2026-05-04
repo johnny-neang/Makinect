@@ -98,6 +98,10 @@ final class KinectManager {
     // Audio (FFT bands / RMS / onset for visualizations)
     let audio = AudioEngine()
 
+    // Per-visualizer user controls, exposed in SidePanel and read by the
+    // visualizer each frame via VisualizerInputs.
+    let parametricSwarm = ParametricSwarmConfig()
+
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {
         didSet {
