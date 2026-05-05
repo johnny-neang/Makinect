@@ -4,5 +4,13 @@
 <dict>
 	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>
+	<!-- Required when Hardened Runtime is enabled. Without this, AVCaptureDevice
+	     auto-denies mic access (notDetermined → denied) without showing the
+	     system prompt. NSMicrophoneUsageDescription alone isn't enough. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<!-- Same story for the camera, in case any future feature needs it -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
 </dict>
 </plist>
