@@ -35,6 +35,10 @@ struct VisualizerInputs {
     let plasmaSea: PlasmaSeaConfig
     let vortexRingSmoke: VortexRingSmokeConfig
     let filamentCosmology: FilamentCosmologyConfig
+    let stableFluids: StableFluidsConfig
+    let dissipativeCells: DissipativeCellsConfig
+    let opticalFlow: OpticalFlowConfig
+    let liquidLightCalligraphy: LiquidLightCalligraphyConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

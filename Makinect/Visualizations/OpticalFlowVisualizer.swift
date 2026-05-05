@@ -69,14 +69,17 @@ final class OpticalFlowVisualizer: Visualizer {
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
         let now = Float(Date().timeIntervalSince(startTime))
+        let cfg = inputs.opticalFlow
+        let drift = cfg.autoHueDrift
+
         var u = OFUniforms(
-            ctrl: SIMD4<Float>(now, 1.0, 0.985 - inputs.audio.rms * 0.03, 0.0008),
+            ctrl: SIMD4<Float>(now, 1.0, cfg.viscosity - inputs.audio.rms * 0.03, cfg.motionGate),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
             palette: SIMD4<Float>(
-                fmod(0.55 + now * 0.04 + bassLow * 0.4, 1.0),
-                fmod(0.05 + now * 0.06 + treb * 0.5, 1.0),
-                0.7 + treb * 0.2,
-                0.6 + inputs.audio.rms * 0.5
+                fmod(cfg.hueA + (now * 0.04 + bassLow * 0.4) * drift, 1.0),
+                fmod(cfg.hueB + (now * 0.06 + treb * 0.5) * drift, 1.0),
+                cfg.saturation + treb * 0.2,
+                cfg.value + inputs.audio.rms * 0.5
             )
         )
         var range = SIMD2<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM)

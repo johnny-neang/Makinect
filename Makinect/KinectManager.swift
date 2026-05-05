@@ -121,6 +121,10 @@ final class KinectManager {
     let plasmaSea = PlasmaSeaConfig()
     let vortexRingSmoke = VortexRingSmokeConfig()
     let filamentCosmology = FilamentCosmologyConfig()
+    let stableFluids = StableFluidsConfig()
+    let dissipativeCells = DissipativeCellsConfig()
+    let opticalFlow = OpticalFlowConfig()
+    let liquidLightCalligraphy = LiquidLightCalligraphyConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

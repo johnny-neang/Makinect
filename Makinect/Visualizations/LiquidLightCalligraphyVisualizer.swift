@@ -72,8 +72,11 @@ final class LiquidLightCalligraphyVisualizer: Visualizer {
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
 
+        let cfg = inputs.liquidLightCalligraphy
+
         // Build emitter list from current joints (or procedural orbits).
         var emitters: [LLEmitter] = []
+        let brush = cfg.brushRadius
         if !inputs.skeletons.isEmpty {
             for skel in inputs.skeletons {
                 for j in skel.joints where j.confidence > 0.3 {
@@ -81,9 +84,9 @@ final class LiquidLightCalligraphyVisualizer: Visualizer {
                     let p = SIMD2<Float>(Float(j.position.x), Float(j.position.y))
                     let v: SIMD2<Float> = lastJointPositions[key].map { p - $0 } ?? .zero
                     lastJointPositions[key] = p
-                    let hue = hueFor(joint: j.name)
+                    let hue = cfg.perJointHue ? hueFor(joint: j.name) : cfg.baseHue
                     emitters.append(LLEmitter(
-                        posHueRadius: SIMD4<Float>(p.x, p.y, hue, 0.025 + length(v) * 0.25),
+                        posHueRadius: SIMD4<Float>(p.x, p.y, hue, (0.025 + length(v) * 0.25) * brush),
                         velocity: SIMD4<Float>(v.x, v.y, 0, 0)
                     ))
                     if emitters.count >= Self.maxEmitters { break }
@@ -98,8 +101,9 @@ final class LiquidLightCalligraphyVisualizer: Visualizer {
                 let r: Float = 0.18 + Float(i % 3) * 0.10
                 let p = SIMD2<Float>(0.5 + cos(phase + Float(i)) * r,
                                      0.5 + sin(phase * 0.9 + Float(i) * 1.1) * r)
+                let hue = cfg.perJointHue ? Float(i) / 6 : cfg.baseHue
                 emitters.append(LLEmitter(
-                    posHueRadius: SIMD4<Float>(p.x, p.y, Float(i) / 6, 0.025),
+                    posHueRadius: SIMD4<Float>(p.x, p.y, hue, 0.025 * brush),
                     velocity: SIMD4<Float>(0, 0, 0, 0)
                 ))
             }
@@ -113,7 +117,8 @@ final class LiquidLightCalligraphyVisualizer: Visualizer {
         }
 
         var u = LLUniforms(
-            ctrl: SIMD4<Float>(inputs.timeSeconds, 0.97, 0.0008 + bassLow * 0.0008, Float(emitCount)),
+            ctrl: SIMD4<Float>(inputs.timeSeconds, cfg.trailDecay,
+                               cfg.viscosity + bassLow * 0.0008, Float(emitCount)),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb)
         )
 

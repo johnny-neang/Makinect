@@ -100,14 +100,17 @@ final class StableFluidsVisualizer: Visualizer {
         let bands = inputs.audio.bands
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
+        let cfg = inputs.stableFluids
+
+        // User-controlled hues, optionally drifted by time + audio.
+        let drift = cfg.autoHueDrift
+        let hueA = fmod(cfg.hueA + (now * 0.05 + bassLow * 0.4) * drift, 1.0)
+        let hueB = fmod(cfg.hueB + (now * 0.07 + treb * 0.4) * drift, 1.0)
+
         var u = SFUniforms(
-            ctrl: SIMD4<Float>(now, 1.0, 0.992, 0.0001),
+            ctrl: SIMD4<Float>(now, 1.0, cfg.dissipation, cfg.viscosity),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
-            palette: SIMD4<Float>(
-                fmod(0.55 + now * 0.05 + bassLow * 0.4, 1.0),
-                fmod(0.05 + now * 0.07 + treb * 0.4, 1.0),
-                0.85, 1.0
-            )
+            palette: SIMD4<Float>(hueA, hueB, cfg.saturation, cfg.value)
         )
         var range = SIMD2<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM)
 

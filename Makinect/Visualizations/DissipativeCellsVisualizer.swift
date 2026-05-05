@@ -16,7 +16,6 @@ import simd
 @MainActor
 final class DissipativeCellsVisualizer: Visualizer {
     private static let maxCells = 64
-    private static let maxAge: Float = 600  // frames
 
     private struct Cell {
         var x: Float
@@ -78,15 +77,17 @@ final class DissipativeCellsVisualizer: Visualizer {
         let bands = inputs.audio.bands
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
+        let cfg = inputs.dissipativeCells
+        let lifespan = cfg.cellLifespan
 
         // Tick CPU simulation.
         for i in cells.indices where cells[i].alive {
-            // Audio-modulated noise drift.
+            // Audio-modulated noise drift (strength + damping user-controlled).
             let theta = atan2(cells[i].y - 0.5, cells[i].x - 0.5)
-            cells[i].vx += cos(theta + .pi / 2) * 0.0008 * (1.0 + bassLow)
-            cells[i].vy += sin(theta + .pi / 2) * 0.0008 * (1.0 + bassLow)
-            cells[i].vx *= 0.95
-            cells[i].vy *= 0.95
+            cells[i].vx += cos(theta + .pi / 2) * cfg.driftStrength * (1.0 + bassLow)
+            cells[i].vy += sin(theta + .pi / 2) * cfg.driftStrength * (1.0 + bassLow)
+            cells[i].vx *= cfg.damping
+            cells[i].vy *= cfg.damping
             cells[i].x += cells[i].vx
             cells[i].y += cells[i].vy
             // Soft boundary repulsion.
@@ -97,11 +98,11 @@ final class DissipativeCellsVisualizer: Visualizer {
             // Age + radius pulse.
             cells[i].age += 1
             cells[i].radius += sin(inputs.timeSeconds * 1.7 + Float(i)) * 0.0008
-            if cells[i].age > Self.maxAge { cells[i].alive = false }
+            if cells[i].age > lifespan { cells[i].alive = false }
         }
 
-        // Mitosis on onset: split a random alive cell into two children.
-        if inputs.audio.onset && lastOnset < 0.5 {
+        // Mitosis on onset (toggle): split a random alive cell into two.
+        if inputs.audio.onset && lastOnset < 0.5 && cfg.mitosisOnOnset {
             let aliveIdx = cells.indices.filter { cells[$0].alive }
             if let parent = aliveIdx.randomElement(), cells.count < Self.maxCells {
                 let p = cells[parent]
@@ -125,15 +126,15 @@ final class DissipativeCellsVisualizer: Visualizer {
         }
         lastOnset = inputs.audio.onset ? 1 : 0
 
-        // Replenish dead slots with periodic re-seeding so the field never empties.
+        // Replenish dead slots so the field never empties (min user-controlled).
         let aliveCount = cells.lazy.filter { $0.alive }.count
-        if aliveCount < 12, cells.count < Self.maxCells {
+        if aliveCount < cfg.minCells, cells.count < Self.maxCells {
             cells.append(Cell(
                 x: Float.random(in: 0.1...0.9),
                 y: Float.random(in: 0.1...0.9),
                 vx: 0, vy: 0,
                 hue: Float.random(in: 0..<1),
-                radius: 0.16,
+                radius: cfg.initialRadius,
                 age: 0, alive: true
             ))
         }
@@ -145,7 +146,7 @@ final class DissipativeCellsVisualizer: Visualizer {
             if c.alive {
                 ptr[i] = CellGPU(
                     posHueRadius: SIMD4<Float>(c.x, c.y, c.hue, c.radius),
-                    ageAlive: SIMD4<Float>(c.age / Self.maxAge, 1, 0, 0)
+                    ageAlive: SIMD4<Float>(c.age / max(1, lifespan), 1, 0, 0)
                 )
                 uploaded += 1
             } else {

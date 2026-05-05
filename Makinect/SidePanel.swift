@@ -256,6 +256,148 @@ struct SidePanel: View {
         if manager.visualization == .filamentCosmology {
             filamentCosmologySection
         }
+
+        if manager.visualization == .stableFluids {
+            stableFluidsSection
+        }
+        if manager.visualization == .dissipativeCells {
+            dissipativeCellsSection
+        }
+        if manager.visualization == .opticalFlow {
+            opticalFlowSection
+        }
+        if manager.visualization == .liquidLightCalligraphy {
+            liquidLightCalligraphySection
+        }
+    }
+
+    @ViewBuilder
+    private var stableFluidsSection: some View {
+        let cfg = manager.stableFluids
+        GroupBox("Stable Fluids — Sim") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Dissipation", value: String(format: "%.4f", cfg.dissipation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).dissipation, in: 0.95...0.999)
+
+                LabeledContent("Viscosity", value: String(format: "%.5f", cfg.viscosity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).viscosity, in: 0...0.01)
+            }
+        }
+        GroupBox("Stable Fluids — Color") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Hue A", value: String(format: "%.2f", cfg.hueA))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueA, in: 0...1)
+                LabeledContent("Hue B", value: String(format: "%.2f", cfg.hueB))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueB, in: 0...1)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+                LabeledContent("Value", value: String(format: "%.2f", cfg.value))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).value, in: 0.3...1.5)
+                LabeledContent("Auto-drift", value: String(format: "%.2f", cfg.autoHueDrift))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).autoHueDrift, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var dissipativeCellsSection: some View {
+        let cfg = manager.dissipativeCells
+        GroupBox("Dissipative Cells") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Lifespan", value: "\(Int(cfg.cellLifespan))f")
+                    .font(.caption)
+                Slider(value: Bindable(cfg).cellLifespan, in: 200...1200)
+
+                LabeledContent("Drift", value: String(format: "%.4f", cfg.driftStrength))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).driftStrength, in: 0...0.003)
+
+                LabeledContent("Damping", value: String(format: "%.3f", cfg.damping))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).damping, in: 0.85...0.99)
+
+                LabeledContent("Min Cells", value: "\(cfg.minCells)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.minCells) },
+                                   set: { cfg.minCells = Int($0) }),
+                    in: 6...32, step: 1
+                )
+
+                LabeledContent("Initial Radius", value: String(format: "%.3f", cfg.initialRadius))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).initialRadius, in: 0.10...0.30)
+
+                Toggle("Mitosis on Onset", isOn: Bindable(cfg).mitosisOnOnset)
+                    .font(.callout)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var opticalFlowSection: some View {
+        let cfg = manager.opticalFlow
+        GroupBox("Optical-Flow Painter") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Viscosity", value: String(format: "%.3f", cfg.viscosity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).viscosity, in: 0.92...0.999)
+
+                LabeledContent("Motion Gate", value: String(format: "%.4f", cfg.motionGate))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).motionGate, in: 0...0.01)
+
+                LabeledContent("Hue A", value: String(format: "%.2f", cfg.hueA))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueA, in: 0...1)
+
+                LabeledContent("Hue B", value: String(format: "%.2f", cfg.hueB))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueB, in: 0...1)
+
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+
+                LabeledContent("Auto-drift", value: String(format: "%.2f", cfg.autoHueDrift))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).autoHueDrift, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var liquidLightCalligraphySection: some View {
+        let cfg = manager.liquidLightCalligraphy
+        GroupBox("Liquid Light Calligraphy") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Trail Decay", value: String(format: "%.3f", cfg.trailDecay))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).trailDecay, in: 0.90...0.999)
+
+                LabeledContent("Viscosity", value: String(format: "%.4f", cfg.viscosity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).viscosity, in: 0...0.005)
+
+                LabeledContent("Brush Size", value: String(format: "%.2f", cfg.brushRadius))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).brushRadius, in: 0.3...3.0)
+
+                Toggle("Per-joint Hues", isOn: Bindable(cfg).perJointHue)
+                    .font(.callout)
+
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+            }
+        }
     }
 
     @ViewBuilder

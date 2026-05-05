@@ -249,7 +249,11 @@ struct MetalKinectView: NSViewRepresentable {
                 volumetricAurora: manager.volumetricAurora,
                 plasmaSea: manager.plasmaSea,
                 vortexRingSmoke: manager.vortexRingSmoke,
-                filamentCosmology: manager.filamentCosmology
+                filamentCosmology: manager.filamentCosmology,
+                stableFluids: manager.stableFluids,
+                dissipativeCells: manager.dissipativeCells,
+                opticalFlow: manager.opticalFlow,
+                liquidLightCalligraphy: manager.liquidLightCalligraphy
             )
 
             viz.draw(in: view, encoder: offEncoder, inputs: inputs)
