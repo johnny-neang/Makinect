@@ -927,6 +927,10 @@ struct SidePanel: View {
                     .font(.caption)
                 Slider(value: Bindable(cfg).saturation, in: 0...1)
 
+                LabeledContent("Brightness", value: String(format: "%.2f", cfg.value))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).value, in: 0...1)
+
                 LabeledContent("Auto-drift", value: String(format: "%.2f", cfg.autoHueDrift))
                     .font(.caption)
                 Slider(value: Bindable(cfg).autoHueDrift, in: 0...1)
