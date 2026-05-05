@@ -36,7 +36,7 @@ struct ContentView: View {
                 case .galaxy:
                     MKGalaxyScreen(manager: manager, app: app)
                 case .presets:
-                    MKPresetsScreen()
+                    MKPresetsScreen(manager: manager, app: app)
                 case .midi:
                     MKMidiScreen()
                 case .output:

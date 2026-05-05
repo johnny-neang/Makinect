@@ -342,411 +342,311 @@ private struct MKGalaxyCard: View {
     }
 }
 
-// MARK: - Presets (bar-quantized timeline)
+// MARK: - Presets (real Snapshot list)
 
+/// Replaces the bar-quantized timeline mock with a working preset
+/// system: capture the current viz + common params + sparse per-viz
+/// values into a named MKSnapshot, recall on demand, persist via
+/// MKPersistence. The bar timeline (Ableton Link, cue automation,
+/// audio-strip waveform) is Phase 2 — see UI-REDESIGN-SPEC §5 / §9.
 struct MKPresetsScreen: View {
+    @Bindable var manager: KinectManager
+    @Bindable var app: MKAppState
+    @State private var selectedID: UUID?
+    @State private var renamingID: UUID?
+    @State private var renameDraft: String = ""
+
     var body: some View {
         HStack(spacing: 0) {
-            presetsList.frame(width: 240)
-            timelineArea.frame(maxWidth: .infinity, maxHeight: .infinity)
-            rightDetail.frame(width: 320)
+            sidebar.frame(width: 280)
+            detail.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(MK.Color.bgWindow)
     }
 
-    private var presetsList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionHead("▾ SHOWS").padding(.bottom, 6)
-            presetRow("Show 1 — Daft Punk", meta: "32 BARS · 4 CUES · 124 BPM",
-                      active: true, badge: "EDIT")
-            presetRow("Show 2 — Aphex", meta: "64 BARS · 8 CUES")
-            presetRow("Show 3 — Burial", meta: "FREE · 6 CUES")
+    // MARK: Sidebar — list + Save
 
-            Rectangle().fill(MK.Color.hairline).frame(height: 1).padding(.vertical, 12)
-
-            sectionHead("▾ SNAPSHOTS").padding(.bottom, 6)
-            presetRow("Aurora · Warm",     meta: "VOLUMETRIC AURORA")
-            presetRow("Aurora · Cold",     meta: "VOLUMETRIC AURORA")
-            presetRow("Smoke · Inferno",   meta: "SMOKE GOD")
-            presetRow("Heart · Slow",      meta: "HEART PULSE")
-            presetRow("Filament · Pull",   meta: "FILAMENT COSMOLOGY")
-            Spacer()
-        }
-        .padding(12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(MK.Color.bgSidebar)
-        .overlay(alignment: .trailing) { Rectangle().fill(MK.Color.hairline).frame(width: 1) }
-    }
-
-    private func presetRow(_ name: String, meta: String, active: Bool = false, badge: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(name).font(MK.Font.label12).foregroundStyle(MK.Color.textPrimary)
-                Spacer()
-                if let badge = badge {
-                    Text(badge)
-                        .font(.system(size: 8, weight: .bold)).tracking(0.6)
-                        .foregroundStyle(MK.Color.accent)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(RoundedRectangle(cornerRadius: 3).fill(MK.Color.accentDim))
-                }
-            }
-            Text(meta).font(MK.Font.mono09).tracking(0.4).foregroundStyle(MK.Color.textTertiary)
-        }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 6)
-            .fill(active ? MK.Color.accent.opacity(0.10) : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: 6)
-            .stroke(active ? MK.Color.accentDim : Color.clear, lineWidth: 1))
-    }
-
-    private var timelineArea: some View {
-        VStack(spacing: 0) {
-            tToolbar.frame(height: 36)
-            barsRuler.frame(height: 24)
-            lanes.frame(maxHeight: .infinity)
-            tBottom.frame(height: 80)
-        }
-    }
-
-    private var tToolbar: some View {
-        HStack(spacing: 8) {
-            ghostBtn("▶ Play"); ghostBtn("⏮"); ghostBtn("⏭")
-            Text("3.2.0 / 32.0.0").font(MK.Font.mono11)
-                .foregroundStyle(MK.Color.textSecondary).padding(.horizontal, 12)
-
-            HStack(spacing: 1) {
-                zoomSeg("1/4", on: false); zoomSeg("1", on: true); zoomSeg("2", on: false)
-                zoomSeg("4", on: false);   zoomSeg("8 bars", on: false)
-            }
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(MK.Color.hairline, lineWidth: 1))
-
-            Spacer()
-            ghostBtn("Snap: ¼ note"); ghostBtn("+ Cue")
-        }
-        .padding(.horizontal, 12)
-        .background(MK.Color.bgElevated)
-        .overlay(alignment: .bottom) { Rectangle().fill(MK.Color.hairline).frame(height: 1) }
-    }
-
-    private func ghostBtn(_ label: String) -> some View {
-        Text(label)
-            .font(MK.Font.label11)
-            .foregroundStyle(MK.Color.textSecondary)
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.clear))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(MK.Color.hairlineStrong, lineWidth: 1))
-    }
-
-    private func zoomSeg(_ label: String, on: Bool) -> some View {
-        Text(label)
-            .font(MK.Font.mono10)
-            .foregroundStyle(on ? MK.Color.accent : MK.Color.textSecondary)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(on ? MK.Color.accentDim : Color.white.opacity(0.02))
-    }
-
-    private var barsRuler: some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: 100)
-            ForEach(0..<13) { i in
-                let major = (i % 4 == 0)
-                let label: String = {
-                    switch i {
-                    case 0: return "1"
-                    case 4: return "5 INTRO"
-                    case 8: return "9 BUILD"
-                    case 12: return "13 DROP"
-                    default: return "\(i + 1)"
-                    }
-                }()
-                Text(label)
-                    .font(MK.Font.mono09)
-                    .foregroundStyle(major ? MK.Color.textSecondary : MK.Color.textTertiary)
-                    .padding(.top, 4).padding(.leading, 4)
-                    .frame(width: 60, alignment: .leading)
-                    .frame(maxHeight: .infinity)
-                    .overlay(alignment: .trailing) {
-                        Rectangle().fill(major ? MK.Color.hairlineStrong : MK.Color.hairline)
-                            .frame(width: 1)
-                    }
-            }
-            Spacer(minLength: 0)
-        }
-        .background(MK.Color.bgElevated)
-        .overlay(alignment: .bottom) { Rectangle().fill(MK.Color.hairline).frame(height: 1) }
-    }
-
-    private var lanes: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(spacing: 0) {
-                lane(title: "VIZ", meta: "Active layer") {
-                    clip(at: 0,   width: 240, name: "Aurora · Warm", bars: "4 BARS",
-                         hue: 0.55, opacity: 1)
-                    clip(at: 240, width: 240, name: "Aurora · Cold", bars: "4 BARS · XFADE 8",
-                         hue: 0.55, opacity: 0.7)
-                    clip(at: 480, width: 300, name: "Smoke God", bars: "5 BARS",
-                         hue: 0.07, opacity: 1)
-                }
-                lane(title: "CC74", meta: "Drop magnitude") {
-                    autoLine(points: [(0,0.7),(60,0.7),(120,0.7),(180,0.7),(240,0.5),
-                                      (300,0.25),(360,0.13),(420,0.04),(480,0.04),
-                                      (540,0.5),(600,0.7),(660,0.7),(720,0.7)],
-                             color: MK.Color.accentWarm)
-                }
-                lane(title: "HUE A", meta: "0 → 1") {
-                    autoLine(points: [(0,0.5),(240,0.5),(240,0.25),(480,0.25),
-                                      (480,0.7),(720,0.7)],
-                             color: MK.Color.accent)
-                }
-                lane(title: "CUES", meta: "Markers") {
-                    cueLabel("A · Warm Up", at: 0)
-                    cueLabel("B · Build", at: 240)
-                    cueLabel("C · Drop ★", at: 480)
-                    cueLabel("D · Outro", at: 600)
-                }
-            }
-            // Section backgrounds
-            sectionBG(at: 100,  width: 240, color: MK.Color.accent)
-            sectionBG(at: 340,  width: 240, color: MK.Color.accentWarm)
-            sectionBG(at: 580,  width: 200, color: MK.Color.danger)
-
-            // Playhead
-            Rectangle()
-                .fill(MK.Color.accent)
-                .frame(width: 2)
-                .shadow(color: MK.Color.accent, radius: 6)
-                .offset(x: 230)
-                .frame(maxHeight: .infinity)
-        }
-        .clipped()
-    }
-
-    private func lane<Content: View>(title: String, meta: String,
-                                     @ViewBuilder _ tracks: () -> Content) -> some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(MK.Font.label11).foregroundStyle(MK.Color.textPrimary)
-                Text(meta).font(MK.Font.mono09).foregroundStyle(MK.Color.textTertiary)
-            }
-            .padding(.horizontal, 12)
-            .frame(width: 100, height: 56, alignment: .leading)
-            .background(MK.Color.bgElevated)
-            .overlay(alignment: .trailing) {
-                Rectangle().fill(MK.Color.hairline).frame(width: 1)
-            }
-            ZStack(alignment: .topLeading) {
-                Rectangle()
-                    .fill(Color.clear)
-                    .background(
-                        LinearGradient(
-                            stops: [.init(color: .clear, location: 0),
-                                    .init(color: .clear, location: 0.99),
-                                    .init(color: MK.Color.hairline, location: 1.0)],
-                            startPoint: .leading, endPoint: .trailing
-                        ),
-                        in: Rectangle()
-                    )
-                tracks()
-            }
-            .frame(maxWidth: .infinity, maxHeight: 56, alignment: .topLeading)
-        }
-        .frame(height: 56)
-        .overlay(alignment: .bottom) { Rectangle().fill(MK.Color.hairline).frame(height: 1) }
-    }
-
-    private func clip(at x: CGFloat, width: CGFloat, name: String, bars: String,
-                      hue: Double, opacity: Double) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(name).font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-            Text(bars).font(MK.Font.mono09).foregroundStyle(.white.opacity(0.7))
-        }
-        .padding(.horizontal, 8).padding(.vertical, 6)
-        .frame(width: width, height: 40, alignment: .topLeading)
-        .background(LinearGradient(
-            colors: [Color(hue: hue, saturation: 0.6, brightness: 0.55),
-                     Color(hue: hue + 0.15, saturation: 0.6, brightness: 0.40)],
-            startPoint: .topLeading, endPoint: .bottomTrailing))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .opacity(opacity)
-        .offset(x: x, y: 8)
-    }
-
-    private func autoLine(points: [(CGFloat, CGFloat)], color: Color) -> some View {
-        GeometryReader { geo in
-            Path { p in
-                guard let first = points.first else { return }
-                let h = geo.size.height
-                let yFor = { (v: CGFloat) -> CGFloat in (1 - v) * (h - 12) + 6 }
-                p.move(to: CGPoint(x: first.0, y: yFor(first.1)))
-                for pt in points.dropFirst() {
-                    p.addLine(to: CGPoint(x: pt.0, y: yFor(pt.1)))
-                }
-            }
-            .stroke(color, lineWidth: 1.5)
-
-            ForEach(0..<points.count, id: \.self) { i in
-                let pt = points[i]
-                Circle()
-                    .fill(color)
-                    .frame(width: 6, height: 6)
-                    .position(x: pt.0, y: (1 - pt.1) * (geo.size.height - 12) + 6)
-            }
-        }
-    }
-
-    private func cueLabel(_ text: String, at x: CGFloat) -> some View {
-        Text(text)
-            .font(.system(size: 8, weight: .bold)).tracking(0.6)
-            .foregroundStyle(Color(red: 0.10, green: 0.05, blue: 0))
-            .padding(.horizontal, 5).padding(.vertical, 2)
-            .background(MK.Color.accentWarm)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-            .offset(x: x, y: 0)
-    }
-
-    private func sectionBG(at x: CGFloat, width: CGFloat, color: Color) -> some View {
-        Rectangle()
-            .fill(color)
-            .opacity(0.06)
-            .frame(width: width)
-            .offset(x: x)
-            .frame(maxHeight: .infinity, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .allowsHitTesting(false)
-    }
-
-    private var tBottom: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("▾ AUDIO ANALYSIS · daft-punk-set.wav")
-                    .font(MK.Font.mono09).tracking(0.8)
-                    .foregroundStyle(MK.Color.textTertiary)
-                HStack(spacing: 1) {
-                    ForEach(0..<48, id: \.self) { i in
-                        let h = CGFloat([0.40, 0.50, 0.35, 0.60, 0.45, 0.55, 0.30, 0.50,
-                                          0.65, 0.40, 0.70, 0.50, 0.75, 0.80, 0.90, 0.95,
-                                          0.85, 0.78, 0.65, 0.55][i % 20])
-                        Rectangle()
-                            .fill(MK.Color.textTertiary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: h * 50)
-                    }
-                }
-                GeometryReader { geo in
-                    HStack(spacing: 1) {
-                        sectionTag("INTRO", color: MK.Color.accent)
-                            .frame(width: geo.size.width * 0.30)
-                        sectionTag("BUILD", color: MK.Color.accentWarm)
-                            .frame(width: geo.size.width * 0.30)
-                        sectionTag("DROP", color: MK.Color.danger)
-                            .frame(width: geo.size.width * 0.25)
-                        sectionTag("OUTRO", color: MK.Color.magenta)
-                            .frame(width: geo.size.width * 0.15)
-                    }
-                }
-                .frame(height: 14)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(MK.Color.bgElevated)
-        }
-        .overlay(alignment: .top) { Rectangle().fill(MK.Color.hairline).frame(height: 1) }
-    }
-
-    private var rightDetail: some View {
+    private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionHead("▾ SELECTION").padding(.bottom, 4)
-            Text("Aurora · Warm → Cold")
-                .font(MK.Font.title16).foregroundStyle(MK.Color.textPrimary)
-            Text("CROSSFADE · BAR 9.1 → 13.1")
-                .font(MK.Font.mono09).tracking(0.6)
-                .foregroundStyle(MK.Color.textTertiary)
-                .padding(.bottom, 14)
-
-            mockSlider(label: "Crossfade Length", value: "4 bars", frac: 0.5)
-            mockSlider(label: "Curve",            value: "ease-in-out", frac: 0.5,
-                       tint: MK.Color.accentWarm)
-            mockSlider(label: "Quantize to",      value: "Bar", frac: 0.5)
-
-            Rectangle().fill(MK.Color.hairline).frame(height: 1).padding(.vertical, 14)
-
-            sectionHead("▾ AI SUGGESTIONS").padding(.bottom, 8)
-            VStack(alignment: .leading, spacing: 6) {
-                (Text("\"At bar 13 the snare drops out. Lower hue temp by ")
-                 + Text("0.3").foregroundColor(MK.Color.accent).bold()
-                 + Text(" for emotional contrast?\""))
-                    .font(MK.Font.label11)
+            HStack {
+                Text("▾ SNAPSHOTS")
+                    .font(MK.Font.label09).tracking(0.8)
                     .foregroundStyle(MK.Color.textSecondary)
-                HStack(spacing: 6) {
-                    kbdTag("Apply"); kbdTag("Dismiss")
+                Spacer()
+                Button(action: saveSnapshot) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                        Text("Save")
+                    }
+                    .font(MK.Font.label11).bold()
+                    .foregroundStyle(Color(red: 0, green: 0.06, blue: 0.09))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(MK.Color.accent))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("s", modifiers: .command)
+                .help("Save current viz + common params as a snapshot (⌘S)")
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+
+            Rectangle().fill(MK.Color.hairline).frame(height: 1)
+
+            if app.snapshots.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(app.snapshots) { snap in
+                            row(snap)
+                        }
+                    }
+                    .padding(8)
                 }
             }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 6)
-                .fill(MK.Color.accent.opacity(0.06)))
-            .overlay(RoundedRectangle(cornerRadius: 6)
-                .stroke(MK.Color.accentDim, lineWidth: 1))
-
             Spacer()
+        }
+        .background(MK.Color.bgSidebar)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(MK.Color.hairline).frame(width: 1)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("No snapshots yet")
+                .font(MK.Font.label12).foregroundStyle(MK.Color.textPrimary)
+            Text("Tune a visualizer in Library, then come back and press ⌘S to save the look. Snapshots persist across launches.")
+                .font(MK.Font.label11)
+                .foregroundStyle(MK.Color.textSecondary)
+            Button { saveSnapshot() } label: {
+                Text("Save current state")
+                    .font(MK.Font.label11)
+                    .foregroundStyle(MK.Color.accent)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(RoundedRectangle(cornerRadius: 5)
+                        .fill(MK.Color.accentDim))
+            }
+            .buttonStyle(.plain)
         }
         .padding(16)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(MK.Color.bgSidebar)
-        .overlay(alignment: .leading) { Rectangle().fill(MK.Color.hairline).frame(width: 1) }
     }
-}
 
-// Helpers shared by Presets / MIDI / Output
-
-@ViewBuilder
-private func sectionHead(_ label: String) -> some View {
-    Text(label)
-        .font(MK.Font.label09).tracking(0.8)
-        .foregroundStyle(MK.Color.textSecondary)
-}
-
-@ViewBuilder
-private func mockSlider(label: String, value: String, frac: CGFloat,
-                        tint: Color = MK.Color.accent) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-        HStack {
-            Text(label).font(MK.Font.label11).foregroundStyle(MK.Color.textSecondary)
-            Spacer()
-            Text(value).font(MK.Font.mono10).foregroundStyle(MK.Color.textPrimary)
-        }
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.08))
-                Capsule().fill(tint).frame(width: geo.size.width * frac)
-                Circle().fill(Color.white).frame(width: 14, height: 14)
-                    .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
-                    .offset(x: geo.size.width * frac - 7)
+    private func row(_ snap: MKSnapshot) -> some View {
+        let isSelected = selectedID == snap.id
+        let isRenaming = renamingID == snap.id
+        return Button {
+            selectedID = snap.id
+        } label: {
+            HStack(spacing: 10) {
+                MKSnapshotThumb(kind: VisualizationKind(rawValue: snap.visualization),
+                                hueShift: snap.common.hueShift)
+                    .frame(width: 56, height: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    if isRenaming {
+                        TextField("Snapshot name", text: $renameDraft, onCommit: {
+                            commitRename(snap)
+                        })
+                        .textFieldStyle(.plain)
+                        .font(MK.Font.label11)
+                        .foregroundStyle(MK.Color.textPrimary)
+                    } else {
+                        Text(snap.name)
+                            .font(MK.Font.label11)
+                            .foregroundStyle(MK.Color.textPrimary)
+                            .lineLimit(1)
+                    }
+                    Text(snap.visualization.uppercased())
+                        .font(MK.Font.mono09).tracking(0.4)
+                        .foregroundStyle(MK.Color.textTertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-            .frame(height: 4)
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? MK.Color.accent.opacity(0.12) : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? MK.Color.accentDim : Color.clear, lineWidth: 1))
         }
-        .frame(height: 16)
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Recall") { recall(snap) }
+            Button("Rename") { startRename(snap) }
+            Divider()
+            Button("Delete", role: .destructive) { delete(snap) }
+        }
+        .onTapGesture(count: 2) { recall(snap) }
     }
-    .padding(.bottom, 10)
+
+    // MARK: Detail — selection preview
+
+    private var detail: some View {
+        Group {
+            if let snap = selectedSnapshot {
+                snapshotDetail(snap)
+            } else {
+                placeholderDetail
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var placeholderDetail: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Snapshots")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(MK.Color.textPrimary)
+            Text("Save your current viz + common-param tuning to a named snapshot, then recall it any time. Snapshots persist across app launches via MKPersistence.")
+                .font(MK.Font.label12)
+                .foregroundStyle(MK.Color.textSecondary)
+                .frame(maxWidth: 520, alignment: .leading)
+            Text("⌘S — Save current state    Double-click any row — Recall    Right-click — Rename / Delete")
+                .font(MK.Font.mono10)
+                .foregroundStyle(MK.Color.textTertiary)
+            Spacer()
+        }
+    }
+
+    private func snapshotDetail(_ snap: MKSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snap.name)
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(MK.Color.textPrimary)
+                    Text("\(snap.visualization) · \(snap.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(MK.Font.mono10).tracking(0.4)
+                        .foregroundStyle(MK.Color.textTertiary)
+                }
+                Spacer()
+                Button { recall(snap) } label: {
+                    Text("Recall ⏎")
+                        .font(MK.Font.label12).bold()
+                        .foregroundStyle(Color(red: 0, green: 0.06, blue: 0.09))
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(MK.Color.accent))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: [])
+            }
+
+            Rectangle().fill(MK.Color.hairline).frame(height: 1)
+
+            // Read-only common-param preview
+            VStack(alignment: .leading, spacing: 10) {
+                Text("▾ COMMON PARAMS")
+                    .font(MK.Font.label09).tracking(0.8)
+                    .foregroundStyle(MK.Color.textSecondary)
+                paramRow("Audio reactivity", "\(String(format: "%.2f", snap.common.audioReactivity))")
+                paramRow("Speed × ",         "\(String(format: "%.2f", snap.common.speedMul))")
+                paramRow("Hue shift",        "\(String(format: "%+.2f", snap.common.hueShift))")
+                paramRow("Saturation × ",    "\(String(format: "%.2f", snap.common.saturationMul))")
+                paramRow("Brightness × ",    "\(String(format: "%.2f", snap.common.brightnessMul))")
+                paramRow("Glow × ",          "\(String(format: "%.2f", snap.common.glowMul))")
+            }
+
+            if !snap.perVizParams.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("▾ PER-VIZ")
+                        .font(MK.Font.label09).tracking(0.8)
+                        .foregroundStyle(MK.Color.textSecondary)
+                    ForEach(snap.perVizParams.keys.sorted(), id: \.self) { key in
+                        paramRow(key, String(format: "%.3f", snap.perVizParams[key] ?? 0))
+                    }
+                }
+            }
+
+            Spacer()
+        }
+    }
+
+    private func paramRow(_ name: String, _ value: String) -> some View {
+        HStack {
+            Text(name).font(MK.Font.label11).foregroundStyle(MK.Color.textSecondary)
+            Spacer()
+            Text(value).font(MK.Font.mono11).foregroundStyle(MK.Color.textPrimary)
+        }
+        .padding(.vertical, 4)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(MK.Color.hairline).frame(height: 1)
+        }
+    }
+
+    // MARK: Actions
+
+    private var selectedSnapshot: MKSnapshot? {
+        guard let id = selectedID else { return nil }
+        return app.snapshots.first(where: { $0.id == id })
+    }
+
+    private func saveSnapshot() {
+        guard let viz = manager.visualization else { return }
+        let name = "\(viz.rawValue) · \(app.snapshots.count + 1)"
+        let snap = MKSnapshot(
+            id: UUID(),
+            name: name,
+            createdAt: Date(),
+            visualization: viz.rawValue,
+            common: manager.snapshotCommon(),
+            perVizParams: manager.captureActiveVizParams()
+        )
+        app.snapshots.insert(snap, at: 0)
+        selectedID = snap.id
+        // Drop into rename mode immediately so the user can re-title it.
+        startRename(snap)
+    }
+
+    private func recall(_ snap: MKSnapshot) {
+        if let kind = VisualizationKind(rawValue: snap.visualization) {
+            manager.visualization = kind
+        }
+        manager.common.audioReactivity = snap.common.audioReactivity
+        manager.common.speedMul        = snap.common.speedMul
+        manager.common.hueShift        = snap.common.hueShift
+        manager.common.saturationMul   = snap.common.saturationMul
+        manager.common.brightnessMul   = snap.common.brightnessMul
+        manager.common.glowMul         = snap.common.glowMul
+        manager.applyActiveVizParams(snap.perVizParams)
+    }
+
+    private func startRename(_ snap: MKSnapshot) {
+        renamingID = snap.id
+        renameDraft = snap.name
+    }
+
+    private func commitRename(_ snap: MKSnapshot) {
+        guard !renameDraft.isEmpty,
+              let i = app.snapshots.firstIndex(where: { $0.id == snap.id }) else {
+            renamingID = nil
+            return
+        }
+        app.snapshots[i].name = renameDraft
+        renamingID = nil
+        renameDraft = ""
+    }
+
+    private func delete(_ snap: MKSnapshot) {
+        app.snapshots.removeAll { $0.id == snap.id }
+        if selectedID == snap.id { selectedID = nil }
+    }
 }
 
-@ViewBuilder
-private func kbdTag(_ label: String) -> some View {
-    Text(label)
-        .font(MK.Font.mono10)
-        .foregroundStyle(MK.Color.textSecondary)
-        .padding(.horizontal, 9).padding(.vertical, 5)
-        .background(Color.black.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay(RoundedRectangle(cornerRadius: 5).stroke(MK.Color.hairline, lineWidth: 1))
-}
+// MARK: - Snapshot thumbnail (categorical gradient)
 
-@ViewBuilder
-private func sectionTag(_ label: String, color: Color) -> some View {
-    Text(label)
-        .font(.system(size: 8, weight: .bold)).tracking(0.6)
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(color)
+private struct MKSnapshotThumb: View {
+    let kind: VisualizationKind?
+    let hueShift: Float
+
+    var body: some View {
+        let cat = kind.map(MKVizCategory.category(for:)) ?? .featured
+        let base = MKGalaxy.color(for: cat)
+        return RoundedRectangle(cornerRadius: 4)
+            .fill(LinearGradient(
+                colors: [base.opacity(0.85),
+                         base.opacity(0.45),
+                         Color(red: 0.024, green: 0.024, blue: 0.031)],
+                startPoint: .top, endPoint: .bottom))
+            .hueRotation(.degrees(Double(hueShift) * 360))
+    }
 }
