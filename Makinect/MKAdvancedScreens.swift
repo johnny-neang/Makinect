@@ -11,109 +11,139 @@ import SwiftUI
 
 struct MKGalaxyScreen: View {
     @Bindable var manager: KinectManager
+    @Bindable var app: MKAppState
     @State private var facet: MKVizCategory? = nil
     @State private var query: String = ""
+    @State private var zoom: CGFloat = 1.0
 
     var body: some View {
-        ZStack {
-            RadialGradient(
-                colors: [Color(red: 0.055, green: 0.055, blue: 0.086),
-                         Color(red: 0.024, green: 0.024, blue: 0.031)],
-                center: .center, startRadius: 0, endRadius: 800
-            )
+        GeometryReader { geo in
+            let size = geo.size
 
-            // Cluster labels
-            ForEach(MKGalaxy.clusters, id: \.label) { cluster in
-                Text(cluster.label.uppercased())
-                    .font(MK.Font.mono09)
-                    .tracking(1.4)
-                    .foregroundStyle(cluster.isCapstone ? MK.Color.accentWarm : MK.Color.textTertiary)
-                    .position(x: cluster.x, y: cluster.y)
-            }
+            ZStack {
+                RadialGradient(
+                    colors: [Color(red: 0.055, green: 0.055, blue: 0.086),
+                             Color(red: 0.024, green: 0.024, blue: 0.031)],
+                    center: .center, startRadius: 0, endRadius: max(size.width, size.height)
+                )
 
-            // Dots — one per visualizer
-            ForEach(VisualizationKind.allCases) { kind in
-                let dot = MKGalaxy.dotFor(kind)
-                let cat = MKVizCategory.category(for: kind)
-                let dim = facet != nil && facet != cat
-                let active = manager.visualization == kind
-                Circle()
-                    .fill(MKGalaxy.color(for: cat))
-                    .frame(width: dot.size, height: dot.size)
-                    .shadow(color: MKGalaxy.color(for: cat), radius: dot.size * 0.6)
-                    .opacity(dim ? 0.18 : 1)
-                    .position(x: dot.x, y: dot.y)
-                    .overlay(active ? Circle()
-                        .stroke(MK.Color.accent, lineWidth: 1.5)
-                        .frame(width: dot.size + 8, height: dot.size + 8)
-                        .position(x: dot.x, y: dot.y) : nil)
-                    .onTapGesture { manager.visualization = kind }
-            }
+                // Zoomable scatter — clusters + dots + active card all
+                // share the same scaleEffect so they pan together. The
+                // toolbar / legend / minimap stay outside the transform.
+                ZStack {
+                    // Cluster labels
+                    ForEach(MKGalaxy.clusters, id: \.label) { cluster in
+                        Text(cluster.label.uppercased())
+                            .font(MK.Font.mono09)
+                            .tracking(1.4)
+                            .foregroundStyle(cluster.isCapstone ? MK.Color.accentWarm : MK.Color.textTertiary)
+                            .position(x: size.width * cluster.fx,
+                                      y: size.height * cluster.fy)
+                    }
 
-            // Focused viz card next to the active dot
-            if let active = manager.visualization {
-                let dot = MKGalaxy.dotFor(active)
-                MKGalaxyCard(kind: active)
-                    .frame(width: 200)
-                    .position(x: dot.x + 130, y: dot.y - 30)
-            }
+                    // Dots — one per visualizer
+                    ForEach(VisualizationKind.allCases) { kind in
+                        let dot = MKGalaxy.dotFor(kind, size: size)
+                        let cat = MKVizCategory.category(for: kind)
+                        let dim = facet != nil && facet != cat
+                        let queryMatches = query.isEmpty
+                            || kind.rawValue.localizedCaseInsensitiveContains(query)
+                            || cat.label.localizedCaseInsensitiveContains(query)
+                        let visualOpacity = (dim || !queryMatches) ? 0.18 : 1.0
+                        let active = manager.visualization == kind
 
-            // Top toolbar
-            VStack {
-                HStack(spacing: 12) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
+                        Circle()
+                            .fill(MKGalaxy.color(for: cat))
+                            .frame(width: dot.size, height: dot.size)
+                            .shadow(color: MKGalaxy.color(for: cat), radius: dot.size * 0.6)
+                            .opacity(visualOpacity)
+                            .position(x: dot.x, y: dot.y)
+                            .overlay(active ? Circle()
+                                .stroke(MK.Color.accent, lineWidth: 1.5)
+                                .frame(width: dot.size + 8, height: dot.size + 8)
+                                .position(x: dot.x, y: dot.y) : nil)
+                            .onTapGesture { manager.visualization = kind }
+                    }
+
+                    // Focused viz card next to the active dot. Card
+                    // position is normalized; +130/-30 offset is replaced
+                    // by a clamped fractional shift so it never overflows
+                    // the canvas at small window sizes.
+                    if let active = manager.visualization {
+                        let dot = MKGalaxy.dotFor(active, size: size)
+                        let cardX = min(size.width - 110, dot.x + 130)
+                        let cardY = max(120, dot.y - 30)
+                        MKGalaxyCard(kind: active) {
+                            // Preview — set it active without leaving Galaxy.
+                            manager.visualization = active
+                        } onSendToOutput: {
+                            manager.visualization = active
+                            app.tab = .performance
+                        }
+                        .frame(width: 200)
+                        .position(x: cardX, y: cardY)
+                    }
+                }
+                .scaleEffect(zoom, anchor: .center)
+                .animation(.easeInOut(duration: 0.18), value: zoom)
+
+                // Top toolbar
+                VStack {
+                    HStack(spacing: 12) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(MK.Color.textTertiary)
+                                .font(.system(size: 11))
+                            TextField(#"Search: "Aurora", "Volumetric", "warm"…"#, text: $query)
+                                .textFieldStyle(.plain)
+                                .font(MK.Font.label12)
+                                .foregroundStyle(MK.Color.textPrimary)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(width: 320, height: 28)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(MK.Color.hairline, lineWidth: 1))
+
+                        facetPill("All", selected: facet == nil) { facet = nil }
+                        ForEach(MKVizCategory.allCases.filter { $0 != .featured }, id: \.self) { cat in
+                            facetPill(cat.label, selected: facet == cat) { facet = (facet == cat) ? nil : cat }
+                        }
+
+                        Spacer()
+
+                        Text("Embed: CLIP-ViT · 768d → UMAP 2d")
+                            .font(MK.Font.mono10)
                             .foregroundStyle(MK.Color.textTertiary)
-                            .font(.system(size: 11))
-                        TextField(#"Search by feel: "warm and slow"…"#, text: $query)
-                            .textFieldStyle(.plain)
-                            .font(MK.Font.label12)
-                            .foregroundStyle(MK.Color.textPrimary)
                     }
-                    .padding(.horizontal, 12)
-                    .frame(width: 320, height: 28)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(MK.Color.hairline, lineWidth: 1))
+                    .padding(16)
+                    Spacer()
+                }
 
-                    facetPill("All", selected: facet == nil) { facet = nil }
-                    ForEach(MKVizCategory.allCases.filter { $0 != .featured }, id: \.self) { cat in
-                        facetPill(cat.label, selected: facet == cat) { facet = (facet == cat) ? nil : cat }
+                // Legend (bottom-left) + minimap (bottom-right)
+                VStack {
+                    Spacer()
+                    HStack {
+                        legend
+                        Spacer()
+                        minimap
                     }
-
-                    Spacer()
-
-                    Text("Embed: CLIP-ViT · 768d → UMAP 2d")
-                        .font(MK.Font.mono10)
-                        .foregroundStyle(MK.Color.textTertiary)
+                    .padding(16)
                 }
-                .padding(16)
-                Spacer()
-            }
 
-            // Legend (bottom-left)
-            VStack {
-                Spacer()
-                HStack {
-                    legend
-                    Spacer()
-                    minimap
-                }
-                .padding(16)
-            }
-
-            // Zoom controls (top-right under toolbar)
-            VStack {
-                Spacer().frame(height: 56)
-                HStack {
-                    Spacer()
-                    VStack(spacing: 4) {
-                        zoomButton("+")
-                        zoomButton("−")
-                        zoomButton("⌂")
+                // Zoom controls (top-right under toolbar)
+                VStack {
+                    Spacer().frame(height: 56)
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 4) {
+                            zoomButton("+") { zoom = min(zoom * 1.25, 4.0) }
+                            zoomButton("−") { zoom = max(zoom / 1.25, 0.5) }
+                            zoomButton("⌂") { zoom = 1.0 }
+                        }
+                        .padding(.trailing, 16)
                     }
-                    .padding(.trailing, 16)
+                    Spacer()
                 }
-                Spacer()
             }
         }
         .background(MK.Color.bgWindow)
@@ -132,13 +162,16 @@ struct MKGalaxyScreen: View {
         .buttonStyle(.plain)
     }
 
-    private func zoomButton(_ label: String) -> some View {
-        Text(label)
-            .font(.system(size: 14))
-            .foregroundStyle(MK.Color.textSecondary)
-            .frame(width: 28, height: 28)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.5)))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(MK.Color.hairline, lineWidth: 1))
+    private func zoomButton(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 14))
+                .foregroundStyle(MK.Color.textSecondary)
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.5)))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(MK.Color.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private var legend: some View {
@@ -162,11 +195,15 @@ struct MKGalaxyScreen: View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.5))
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+            // Viewport rect tracks the zoom — at 1× it covers the full
+            // minimap, at 2× it shrinks to a quarter, etc.
+            let vpScale = 1.0 / max(0.5, zoom)
             RoundedRectangle(cornerRadius: 3)
                 .fill(MK.Color.accentDim)
                 .overlay(RoundedRectangle(cornerRadius: 3).stroke(MK.Color.accent, lineWidth: 1))
-                .frame(width: 50, height: 35)
-                .offset(x: 42, y: 27)
+                .frame(width: 140 * vpScale, height: 90 * vpScale)
+                .offset(x: (140 - 140 * vpScale) / 2,
+                        y: (90 - 90 * vpScale) / 2)
         }
         .frame(width: 140, height: 90)
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(MK.Color.hairline, lineWidth: 1))
@@ -174,17 +211,20 @@ struct MKGalaxyScreen: View {
 }
 
 private enum MKGalaxy {
-    struct Cluster { let label: String; let x: CGFloat; let y: CGFloat; let isCapstone: Bool }
+    /// Fractional cluster center — multiplied by the canvas size at draw
+    /// time so the layout reflows as the window resizes.
+    struct Cluster { let label: String; let fx: CGFloat; let fy: CGFloat; let isCapstone: Bool }
     struct Dot { let x: CGFloat; let y: CGFloat; let size: CGFloat }
 
-    // Scaled to a 1280×620 inner canvas (post-toolbar). Approximate, look-good.
+    /// Cluster centers as fractions of the canvas — independent of any
+    /// fixed pixel dimension. Tuned to look balanced in 16:10 ratios.
     static let clusters: [Cluster] = [
-        .init(label: "Volumetric ▸ Aurora", x: 250, y: 150, isCapstone: false),
-        .init(label: "Optical ▸ Heat",      x: 820, y: 110, isCapstone: false),
-        .init(label: "Particles ▸ Dust",    x: 380, y: 380, isCapstone: false),
-        .init(label: "Surface ▸ Water",     x: 920, y: 400, isCapstone: false),
-        .init(label: "Skeletal ▸ Body",     x: 620, y: 500, isCapstone: false),
-        .init(label: "★ Capstone",          x: 640, y: 260, isCapstone: true)
+        .init(label: "Volumetric ▸ Aurora", fx: 0.20, fy: 0.20, isCapstone: false),
+        .init(label: "Optical ▸ Heat",      fx: 0.65, fy: 0.16, isCapstone: false),
+        .init(label: "Particles ▸ Dust",    fx: 0.30, fy: 0.55, isCapstone: false),
+        .init(label: "Surface ▸ Water",     fx: 0.72, fy: 0.58, isCapstone: false),
+        .init(label: "Skeletal ▸ Body",     fx: 0.48, fy: 0.78, isCapstone: false),
+        .init(label: "★ Capstone",          fx: 0.50, fy: 0.36, isCapstone: true)
     ]
 
     static func color(for cat: MKVizCategory) -> Color {
@@ -203,65 +243,94 @@ private enum MKGalaxy {
         VisualizationKind.allCases.filter { MKVizCategory.category(for: $0) == cat }.count
     }
 
-    /// Stable per-viz position around its cluster center, derived from
-    /// a hash of the rawValue so it doesn't wander across launches.
-    static func dotFor(_ kind: VisualizationKind) -> Dot {
+    /// Deterministic per-viz UTF-8 byte sum — stable across launches,
+    /// unlike Swift's randomized `hashValue`. Used to scatter dots
+    /// around their cluster centers without movement between sessions.
+    private static func stableHash(_ s: String) -> Int {
+        s.utf8.reduce(0) { $0 &+ Int($1) }
+    }
+
+    /// Fractional cluster center for a given category — paired with the
+    /// labels above. Slight offsets from the label positions so the
+    /// label sits clear of the cloud.
+    private static func center(for cat: MKVizCategory) -> CGPoint {
+        switch cat {
+        case .volumetric: return CGPoint(x: 0.20, y: 0.27)
+        case .optical:    return CGPoint(x: 0.65, y: 0.23)
+        case .particles:  return CGPoint(x: 0.30, y: 0.62)
+        case .surface:    return CGPoint(x: 0.72, y: 0.65)
+        case .skeletal:   return CGPoint(x: 0.48, y: 0.84)
+        case .capstone:   return CGPoint(x: 0.50, y: 0.43)
+        case .featured:   return CGPoint(x: 0.40, y: 0.50)
+        }
+    }
+
+    /// Compute a per-viz dot in absolute coordinates given the canvas
+    /// size. Cluster center + UTF-8-hash-derived polar offset.
+    static func dotFor(_ kind: VisualizationKind, size: CGSize) -> Dot {
         let cat = MKVizCategory.category(for: kind)
-        let center: CGPoint = {
-            switch cat {
-            case .volumetric: return CGPoint(x: 250, y: 200)
-            case .optical:    return CGPoint(x: 820, y: 160)
-            case .particles:  return CGPoint(x: 380, y: 430)
-            case .surface:    return CGPoint(x: 920, y: 450)
-            case .skeletal:   return CGPoint(x: 620, y: 540)
-            case .capstone:   return CGPoint(x: 640, y: 300)
-            case .featured:   return CGPoint(x: 500, y: 350)
-            }
-        }()
-        let h = abs(kind.rawValue.hashValue)
-        let r: CGFloat = 70
+        let centerFrac = center(for: cat)
+        let cx = size.width * centerFrac.x
+        let cy = size.height * centerFrac.y
+        let h = stableHash(kind.rawValue)
+        let radius = min(size.width, size.height) * 0.10
         let angle = CGFloat(h % 360) * .pi / 180
-        let dist = CGFloat((h / 360) % 100) / 100 * r
-        let size = CGFloat(5 + (h % 6))
+        let dist = CGFloat((h / 360) % 100) / 100 * radius
+        let dotSize = CGFloat(5 + (h % 6))
         return Dot(
-            x: center.x + cos(angle) * dist,
-            y: center.y + sin(angle) * dist,
-            size: size
+            x: cx + cos(angle) * dist,
+            y: cy + sin(angle) * dist,
+            size: dotSize
         )
     }
 }
 
 private struct MKGalaxyCard: View {
     let kind: VisualizationKind
+    let onPreview: () -> Void
+    let onSendToOutput: () -> Void
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Preview gradient
+        let cat = MKVizCategory.category(for: kind)
+        // Per-category gradient — reflects the dot color so the card
+        // visually identifies where it came from.
+        let catColor = MKGalaxy.color(for: cat)
+
+        return VStack(alignment: .leading, spacing: 6) {
             RoundedRectangle(cornerRadius: 5)
                 .fill(LinearGradient(
-                    colors: [Color(hue: 0.55, saturation: 0.6, brightness: 0.85),
-                             Color(hue: 0.78, saturation: 0.6, brightness: 0.45),
+                    colors: [catColor.opacity(0.85),
+                             catColor.opacity(0.45),
                              Color(red: 0.024, green: 0.024, blue: 0.031)],
                     startPoint: .top, endPoint: .bottom))
                 .frame(height: 90)
             Text(kind.rawValue)
                 .font(MK.Font.label12)
                 .foregroundStyle(MK.Color.textPrimary)
-            Text("\(MKVizCategory.category(for: kind).label.uppercased()) · k=12 NEAREST")
+            Text("\(cat.label.uppercased()) · k=12 NEAREST")
                 .font(MK.Font.mono09).tracking(0.6)
                 .foregroundStyle(MK.Color.textTertiary)
             HStack(spacing: 4) {
-                Text("Preview")
-                    .font(MK.Font.label10)
-                    .foregroundStyle(MK.Color.textSecondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.06)))
-                Text("Send to Output ⏎")
-                    .font(MK.Font.label10).bold()
-                    .foregroundStyle(Color(red: 0, green: 0.06, blue: 0.09))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(MK.Color.accent))
+                Button(action: onPreview) {
+                    Text("Preview")
+                        .font(MK.Font.label10)
+                        .foregroundStyle(MK.Color.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.06)))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onSendToOutput) {
+                    Text("Send to Output ⏎")
+                        .font(MK.Font.label10).bold()
+                        .foregroundStyle(Color(red: 0, green: 0.06, blue: 0.09))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(MK.Color.accent))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: [])
             }
             .padding(.top, 2)
         }
