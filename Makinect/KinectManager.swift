@@ -98,6 +98,9 @@ final class KinectManager {
     // Audio (FFT bands / RMS / onset for visualizations)
     let audio = AudioEngine()
 
+    // Process-level CPU / memory / FPS sampler for the SidePanel "System" panel.
+    let resourceMonitor = ResourceMonitor()
+
     // Universal modifiers applied across every visualizer (hue / sat / val
     // / glow at output stage; speed and audio-reactivity scale inputs).
     let common = VisualizationCommonParams()

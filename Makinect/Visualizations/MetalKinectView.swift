@@ -69,10 +69,21 @@ struct MetalKinectView: NSViewRepresentable {
             self.textures = tx
 
             // Common-params post-process pipeline.
+            //
+            // CRITICAL: must match the MTKView's depth attachment format
+            // (.depth32Float) even though we don't use depth in the post pass.
+            // Metal asserts on pipeline-vs-framebuffer pixel-format mismatch
+            // when the encoder is created against the drawable's render pass
+            // (which has a depth attachment attached). Without this, the
+            // app froze with:
+            //   "For depth attachment, the render pipeline's pixelFormat
+            //    (MTLPixelFormatInvalid) does not match the framebuffer's
+            //    pixelFormat (MTLPixelFormatDepth32Float)."
             let pdesc = MTLRenderPipelineDescriptor()
             pdesc.vertexFunction = lib.makeFunction(name: "passthrough_vs")
             pdesc.fragmentFunction = lib.makeFunction(name: "common_post_fs")
             pdesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            pdesc.depthAttachmentPixelFormat = .depth32Float
             guard let pso = try? dev.makeRenderPipelineState(descriptor: pdesc) else {
                 fatalError("Failed to build common_post pipeline — Shaders.metal must compile")
             }
@@ -175,6 +186,9 @@ struct MetalKinectView: NSViewRepresentable {
                   let drawable = view.currentDrawable,
                   let drawablePass = view.currentRenderPassDescriptor,
                   let commandBuffer = textures.commandQueue.makeCommandBuffer() else { return }
+
+            // — FPS sample for the resource monitor (free; just records a timestamp).
+            manager.resourceMonitor.registerFrame()
 
             // — Universal common params: pre-scale time and route audio
             //   reactivity into the AudioEngine so every visualizer reads

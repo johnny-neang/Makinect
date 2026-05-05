@@ -187,6 +187,12 @@ struct SidePanel: View {
             AudioMonitorView(audio: manager.audio)
         }
 
+        // System status — CPU / memory / FPS readouts so a VJ can see at a
+        // glance whether they have headroom or are approaching frame drops.
+        GroupBox("System") {
+            ResourceMonitorView(monitor: manager.resourceMonitor)
+        }
+
         if manager.visualization == .pointCloud || manager.visualization == .voxelSculpt {
             GroupBox("Camera") {
                 Text("Drag to orbit · Pinch / scroll to zoom")
