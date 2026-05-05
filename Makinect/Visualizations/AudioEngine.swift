@@ -59,6 +59,7 @@ final class AudioEngine {
     var selectedInputID: AudioDeviceID?
 
     @ObservationIgnored private let engine = AVAudioEngine()
+    @ObservationIgnored private var switchGeneration: Int = 0
     @ObservationIgnored private var fftSetup: vDSP.FFT<DSPSplitComplex>?
     @ObservationIgnored private let log2n = vDSP_Length(log2(Float(AudioEngine.fftSize)))
     @ObservationIgnored private var window: [Float] = []
@@ -175,19 +176,38 @@ final class AudioEngine {
 
     func start() {
         guard !isRunning else { return }
-        // If a specific input is selected, route the engine's input node to it
-        // via AudioUnit property — avoids mutating the global system default
-        // (which the previous implementation did, causing the "no object with
-        // given ID 0" error when selectedInputID was 0).
+
+        // CRITICAL: reset the engine before binding the device. Without this,
+        // AVAudioEngine's internal format cache holds the previous device's
+        // sample rate, and installTap() throws an UNCATCHABLE Obj-C exception
+        // when the new hardware reports a different rate (e.g. 44.1k vs 48k):
+        //
+        //   "Format mismatch: input hw 1ch 44100Hz, client format 1ch 48000Hz"
+        //   *** Terminating app due to uncaught exception 'com.apple.coreaudio.avfaudio'
+        //
+        // engine.reset() flushes that cache. Then we bind the device, then
+        // we read the (now-correct) format off the input node.
+        engine.reset()
+
         if let target = selectedInputID, target != 0 {
             bindEngineInput(to: target)
         }
+
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        // inputFormat(forBus:) reflects the actual hardware bus format AFTER
+        // the device bind, where outputFormat(forBus:) can lag because it
+        // describes what the node OUTPUTS (post any internal SR conversion).
+        let format = input.inputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else { return }
 
+        // Defensive removal — installTap throws if a tap is already present.
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(AudioEngine.fftSize), format: format) { [weak self] buffer, _ in
+
+        // Pass `format: nil` so AVAudioEngine fetches the source bus's actual
+        // current format itself instead of trusting the value we hand it.
+        // This is the canonical defense against the "format mismatch" crash
+        // when the input device's sample rate doesn't match what we cached.
+        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(AudioEngine.fftSize), format: nil) { [weak self] buffer, _ in
             self?.process(buffer: buffer)
         }
 
@@ -215,12 +235,16 @@ final class AudioEngine {
         selectedInputID = id
         if isRunning {
             stop()
-            // Give CoreAudio a moment to tear down the IO thread before
-            // restarting — without this, we hit "HALB_IOThread::_Start: there
-            // already is a thread" because the previous IO thread is still
-            // winding down when start() reissues.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
-                self?.start()
+            // Generation counter — if the user picks devices A → B → C in
+            // quick succession, only the LAST asyncAfter actually fires
+            // start(); earlier closures see a stale generation and bail.
+            // This prevents stacked engine.start() attempts that would crash
+            // each other with format mismatches.
+            switchGeneration &+= 1
+            let gen = switchGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                guard let self, self.switchGeneration == gen else { return }
+                self.start()
             }
         }
     }
