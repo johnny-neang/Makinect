@@ -26,13 +26,13 @@ struct ContentView: View {
                 case .settings:
                     MKSettingsScreen(manager: manager)
                 case .galaxy:
-                    MKStubScreen.galaxy()
+                    MKGalaxyScreen(manager: manager)
                 case .presets:
-                    MKStubScreen.presets()
+                    MKPresetsScreen()
                 case .midi:
-                    MKStubScreen.midi()
+                    MKMidiScreen()
                 case .output:
-                    MKStubScreen.output()
+                    MKOutputScreen()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

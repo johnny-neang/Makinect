@@ -162,7 +162,7 @@ struct MKPerformanceView: View {
                     .foregroundStyle(live ? Color(red: 0, green: 0.06, blue: 0.09)
                                           : (armed ? MK.Color.accentWarm : MK.Color.textTertiary))
                     .opacity(live ? 0.6 : 1)
-                Text(kind.rawValue.replacingOccurrences(of: " ", with: " "))
+                Text(kind.rawValue)
                     .font(MK.Font.label10)
                     .foregroundStyle(live ? Color(red: 0, green: 0.06, blue: 0.09)
                                           : (armed ? MK.Color.accentWarm : MK.Color.textSecondary))

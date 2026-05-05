@@ -1,6 +1,5 @@
-// MKAuxScreens — Audio, Settings, and stub screens (Galaxy / Presets /
-// MIDI / Output). The first two embed existing functionality from the
-// pre-redesign side panel; the stubs are placeholders for upcoming work.
+// MKAuxScreens — Audio (full DSP monitor + device picker) and Settings
+// (Stream Mode + Depth Range + Kinect device + ResourceMonitor) screens.
 
 import SwiftUI
 
@@ -155,60 +154,3 @@ private struct MKSettingsCard<Content: View>: View {
     }
 }
 
-// MARK: - Stub screens (Galaxy / Presets / MIDI / Output)
-
-struct MKStubScreen: View {
-    let tab: MKTab
-    let blurb: String
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Text(tab.label)
-                .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(MK.Color.textPrimary)
-            Text(blurb)
-                .font(MK.Font.label12)
-                .foregroundStyle(MK.Color.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 520)
-            Text("Coming next — slated for the post-redesign roadmap.")
-                .font(MK.Font.mono10)
-                .foregroundStyle(MK.Color.textTertiary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MK.Color.bgWindow)
-    }
-}
-
-extension MKStubScreen {
-    static func galaxy() -> MKStubScreen {
-        MKStubScreen(
-            tab: .galaxy,
-            blurb: "Embedding-space constellation of all 38 visualizers. " +
-                   "Drift through latent space; clusters reveal stylistic neighbors."
-        )
-    }
-    static func presets() -> MKStubScreen {
-        MKStubScreen(
-            tab: .presets,
-            blurb: "Bar-quantized timeline. Save banks of viz + parameter " +
-                   "snapshots and trigger them from the Performance scene grid."
-        )
-    }
-    static func midi() -> MKStubScreen {
-        MKStubScreen(
-            tab: .midi,
-            blurb: "Learn-mode mappings between MIDI / OSC sources and the " +
-                   "bespoke control surface, with per-mapping curve editor."
-        )
-    }
-    static func output() -> MKStubScreen {
-        MKStubScreen(
-            tab: .output,
-            blurb: "Multi-display routing. Borderless second-window output, " +
-                   "fit modes, gamma, mirror, and keystone warp for projection mapping."
-        )
-    }
-}

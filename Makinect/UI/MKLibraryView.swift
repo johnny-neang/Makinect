@@ -232,7 +232,9 @@ struct MKLibraryView: View {
             Rectangle().fill(MK.Color.hairline).frame(height: 1)
 
             // Per-viz bespoke controls — preserves Phase C's 38 control sets.
-            SidePanel(manager: manager)
+            // `compact: true` skips Stream Mode / Depth Range / Audio Input /
+            // Audio Monitor / System (those live in Settings + Audio tabs now).
+            SidePanel(manager: manager, compact: true)
                 .frame(maxHeight: .infinity)
         }
         .background(MK.Color.bgSidebar)

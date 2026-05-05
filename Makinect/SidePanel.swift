@@ -4,6 +4,10 @@ import SwiftUI
 
 struct SidePanel: View {
     @Bindable var manager: KinectManager
+    /// When true, render only the per-viz bespoke control sections.
+    /// Used by the redesigned Library inspector, which has its own chrome
+    /// for stream mode, depth, audio device, monitor, and resource panels.
+    var compact: Bool = false
 
     private enum TopMode: String, CaseIterable, Identifiable {
         case stream = "Stream"
@@ -13,6 +17,19 @@ struct SidePanel: View {
     @State private var topMode: TopMode = .stream
 
     var body: some View {
+        if compact {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    bespokeOnly
+                }
+                .padding()
+            }
+        } else {
+            fullBody
+        }
+    }
+
+    private var fullBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 // Source — pick where the visualization textures come from.
@@ -193,6 +210,14 @@ struct SidePanel: View {
             ResourceMonitorView(monitor: manager.resourceMonitor)
         }
 
+        bespokeOnly
+    }
+
+    /// Per-visualizer bespoke control sections (38 viz × Phase C).
+    /// Extracted so the redesigned Library inspector can reuse just this
+    /// block without dragging in the duplicated chrome above.
+    @ViewBuilder
+    private var bespokeOnly: some View {
         if manager.visualization == .pointCloud || manager.visualization == .voxelSculpt {
             GroupBox("Camera") {
                 Text("Drag to orbit · Pinch / scroll to zoom")
@@ -201,134 +226,44 @@ struct SidePanel: View {
             }
         }
 
-        if manager.visualization == .parametricSwarm {
-            parametricSwarmSection
-        }
-
-        if manager.visualization == .particleStorm {
-            particleStormSection
-        }
-
-        if manager.visualization == .mercuryStorm {
-            mercuryStormSection
-        }
-
-        if manager.visualization == .mandelbulbAviary {
-            mandelbulbAviarySection
-        }
-
-        if manager.visualization == .bodyOfPetals {
-            bodyOfPetalsSection
-        }
-
-        if manager.visualization == .mocapConstellation {
-            mocapConstellationSection
-        }
-
-        if manager.visualization == .sandMandala {
-            sandMandalaSection
-        }
-
-        if manager.visualization == .strandVeil {
-            strandVeilSection
-        }
-
-        if manager.visualization == .nebula {
-            nebulaSection
-        }
-
-        if manager.visualization == .smokeGod {
-            smokeGodSection
-        }
-
-        if manager.visualization == .volumetricAurora {
-            volumetricAuroraSection
-        }
-
-        if manager.visualization == .plasmaSea {
-            plasmaSeaSection
-        }
-
-        if manager.visualization == .vortexRingSmoke {
-            vortexRingSmokeSection
-        }
-
-        if manager.visualization == .filamentCosmology {
-            filamentCosmologySection
-        }
-
-        if manager.visualization == .stableFluids {
-            stableFluidsSection
-        }
-        if manager.visualization == .dissipativeCells {
-            dissipativeCellsSection
-        }
-        if manager.visualization == .opticalFlow {
-            opticalFlowSection
-        }
-        if manager.visualization == .liquidLightCalligraphy {
-            liquidLightCalligraphySection
-        }
-        if manager.visualization == .pixelStorm {
-            pixelStormSection
-        }
-        if manager.visualization == .glitchMosaic {
-            glitchMosaicSection
-        }
-        if manager.visualization == .impastoPainter {
-            impastoPainterSection
-        }
-        if manager.visualization == .pointCloud {
-            pointCloudSection
-        }
-        if manager.visualization == .voxelSculpt {
-            voxelSculptSection
-        }
-        if manager.visualization == .kineticWireframe {
-            kineticWireframeSection
-        }
-        if manager.visualization == .bodyPaint {
-            bodyPaintSection
-        }
-        if manager.visualization == .cathedralOfBones {
-            cathedralOfBonesSection
-        }
-        if manager.visualization == .hyperbolicTunnel {
-            hyperbolicTunnelSection
-        }
-        if manager.visualization == .iridescentPlumage {
-            iridescentPlumageSection
-        }
-        if manager.visualization == .origamiBody {
-            origamiBodySection
-        }
-        if manager.visualization == .stainedCathedral {
-            stainedCathedralSection
-        }
-        if manager.visualization == .glassOcean {
-            glassOceanSection
-        }
-        if manager.visualization == .forestOfLight {
-            forestOfLightSection
-        }
-        if manager.visualization == .spectralOcean {
-            spectralOceanSection
-        }
-        if manager.visualization == .liquidChromeBody {
-            liquidChromeBodySection
-        }
-        if manager.visualization == .velvetPetalField {
-            velvetPetalFieldSection
-        }
-        if manager.visualization == .magneticIronFilings {
-            magneticIronFilingsSection
-        }
-        if manager.visualization == .boidsMurmuration {
-            boidsMurmurationSection
-        }
-        if manager.visualization == .memoryPalace {
-            memoryPalaceSection
-        }
+        if manager.visualization == .parametricSwarm { parametricSwarmSection }
+        if manager.visualization == .particleStorm { particleStormSection }
+        if manager.visualization == .mercuryStorm { mercuryStormSection }
+        if manager.visualization == .mandelbulbAviary { mandelbulbAviarySection }
+        if manager.visualization == .bodyOfPetals { bodyOfPetalsSection }
+        if manager.visualization == .mocapConstellation { mocapConstellationSection }
+        if manager.visualization == .sandMandala { sandMandalaSection }
+        if manager.visualization == .strandVeil { strandVeilSection }
+        if manager.visualization == .nebula { nebulaSection }
+        if manager.visualization == .smokeGod { smokeGodSection }
+        if manager.visualization == .volumetricAurora { volumetricAuroraSection }
+        if manager.visualization == .plasmaSea { plasmaSeaSection }
+        if manager.visualization == .vortexRingSmoke { vortexRingSmokeSection }
+        if manager.visualization == .filamentCosmology { filamentCosmologySection }
+        if manager.visualization == .stableFluids { stableFluidsSection }
+        if manager.visualization == .dissipativeCells { dissipativeCellsSection }
+        if manager.visualization == .opticalFlow { opticalFlowSection }
+        if manager.visualization == .liquidLightCalligraphy { liquidLightCalligraphySection }
+        if manager.visualization == .pixelStorm { pixelStormSection }
+        if manager.visualization == .glitchMosaic { glitchMosaicSection }
+        if manager.visualization == .impastoPainter { impastoPainterSection }
+        if manager.visualization == .pointCloud { pointCloudSection }
+        if manager.visualization == .voxelSculpt { voxelSculptSection }
+        if manager.visualization == .kineticWireframe { kineticWireframeSection }
+        if manager.visualization == .bodyPaint { bodyPaintSection }
+        if manager.visualization == .cathedralOfBones { cathedralOfBonesSection }
+        if manager.visualization == .hyperbolicTunnel { hyperbolicTunnelSection }
+        if manager.visualization == .iridescentPlumage { iridescentPlumageSection }
+        if manager.visualization == .origamiBody { origamiBodySection }
+        if manager.visualization == .stainedCathedral { stainedCathedralSection }
+        if manager.visualization == .glassOcean { glassOceanSection }
+        if manager.visualization == .forestOfLight { forestOfLightSection }
+        if manager.visualization == .spectralOcean { spectralOceanSection }
+        if manager.visualization == .liquidChromeBody { liquidChromeBodySection }
+        if manager.visualization == .velvetPetalField { velvetPetalFieldSection }
+        if manager.visualization == .magneticIronFilings { magneticIronFilingsSection }
+        if manager.visualization == .boidsMurmuration { boidsMurmurationSection }
+        if manager.visualization == .memoryPalace { memoryPalaceSection }
     }
 
     @ViewBuilder
