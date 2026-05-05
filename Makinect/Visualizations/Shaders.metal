@@ -416,10 +416,16 @@ inline float fbm3(float3 p) {
     return v;
 }
 
+struct NebulaParams {
+    float4 march;     // (steps, threshold, densityScale, audioCoupling)
+    float4 palette;   // (baseHue, saturation, bodyVoid, noiseScale)
+};
+
 fragment float4 nebula_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant NebulaParams &cfg [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -438,32 +444,40 @@ fragment float4 nebula_fs(
     float depthMM = depthTex.sample(s, depthUV).r;
     bool body = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
 
-    // March 32 steps from near to far, accumulating density and emission.
+    // — User-tunable parameters
+    int   STEPS           = clamp(int(cfg.march.x), 8, 64);
+    float threshold       = cfg.march.y;
+    float densityScale    = cfg.march.z;
+    float audioCoupling   = cfg.march.w;
+    float baseHue         = cfg.palette.x;
+    float saturation      = cfg.palette.y;
+    float bodyVoid        = cfg.palette.z;
+    float noiseScale      = cfg.palette.w;
+
     float3 acc = float3(0.0);
     float trans = 1.0;
-    const int STEPS = 32;
     float zNear = 0.5;
     float zFar  = 4.5;
     float dz = (zFar - zNear) / float(STEPS);
 
-    float palShift = bass * 0.12 + 0.5 + 0.05 * sin(t * 0.3);
+    float palShift = bass * 0.12 + baseHue + 0.05 * sin(t * 0.3);
 
-    for (int i = 0; i < STEPS; i++) {
+    for (int i = 0; i < 64; i++) {
+        if (i >= STEPS) break;
         float z = zNear + (float(i) + 0.5) * dz;
         float3 q = ro + rd * z;
-        // Animate the noise field
         q.xy += float2(sin(t * 0.15 + q.z), cos(t * 0.18 - q.z * 0.5)) * 0.3;
         q.z += t * 0.1;
 
-        float density = fbm3(q * (1.0 + bass * 0.4));
-        density = pow(saturate(density - 0.45), 2.0) * (1.5 + u.rms * 1.5);
+        float density = fbm3(q * (noiseScale + bass * 0.4));
+        density = pow(saturate(density - threshold), 2.0) * (densityScale + u.rms * audioCoupling);
 
-        // Punch a hole behind the body silhouette.
-        if (body && z < 2.5) density *= 0.05;
+        // Body silhouette void.
+        if (body && z < 2.5) density *= max(0.0, 1.0 - bodyVoid);
 
         // Emission color: hue ramps with z, brightened by treble.
         float hue = palShift + z * 0.07 + density * 0.2;
-        float3 emit = hsv2rgb(float3(fract(hue), 0.55, 1.0)) * (0.5 + treb * 1.2);
+        float3 emit = hsv2rgb(float3(fract(hue), saturation, 1.0)) * (0.5 + treb * 1.2);
 
         float a = 1.0 - exp(-density * dz * 6.0);
         acc += trans * emit * a;
@@ -1704,10 +1718,16 @@ fragment float4 mandelbulb_aviary_fs(
 // passes near body silhouette, the fog "lights up" — body emits shafts of
 // crepuscular rays. Onset triggers ember sparks throughout the volume.
 
+struct SmokeGodParams {
+    float4 march;     // (steps, threshold, densityScale, audioCoupling)
+    float4 palette;   // (litHue, shadowHue, saturation, emberStrength)
+};
+
 fragment float4 smoke_god_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant SmokeGodParams &cfg [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -1724,6 +1744,16 @@ fragment float4 smoke_god_fs(
     float depthMM = depthTex.sample(s, depthUV).r;
     bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
 
+    // — User-tunable parameters
+    int   STEPS         = clamp(int(cfg.march.x), 8, 64);
+    float threshold     = cfg.march.y;
+    float densityScale  = cfg.march.z;
+    float audioCoupling = cfg.march.w;
+    float litHue        = cfg.palette.x;
+    float shadowHue     = cfg.palette.y;
+    float saturation    = cfg.palette.z;
+    float emberStr      = cfg.palette.w;
+
     // Camera at origin, ray in p direction
     float3 ro = float3(0, 0, -2.0);
     float3 rd = normalize(float3(p, 1.0));
@@ -1731,13 +1761,12 @@ fragment float4 smoke_god_fs(
     // March accumulating fog
     float3 acc = float3(0);
     float trans = 1.0;
-    const int STEPS = 32;
     float zNear = 0.5;
     float zFar = 5.0;
     float dz = (zFar - zNear) / float(STEPS);
 
-    // For god-rays: sample depth along the projected ray to detect "lit" regions
-    for (int i = 0; i < STEPS; i++) {
+    for (int i = 0; i < 64; i++) {
+        if (i >= STEPS) break;
         if (trans < 0.005) break;
         float z = zNear + (float(i) + hash21(uv * 100.0 + t)) * dz;
         float3 q = ro + rd * z;
@@ -1746,11 +1775,10 @@ fragment float4 smoke_god_fs(
         q.z += t * 0.08;
 
         float density = fbm3(q * (1.5 + bass * 0.6));
-        density = pow(saturate(density - 0.40), 2.0) * (0.8 + u.rms * 1.2);
+        density = pow(saturate(density - threshold), 2.0) * (densityScale + u.rms * audioCoupling);
 
         // Project sample back to screen and check body silhouette
-        // Approximate: sample depth at the ray's projected (x,y)
-        float2 projUV = uv + (q.xy * 0.04);  // small offset based on world pos
+        float2 projUV = uv + (q.xy * 0.04);
         projUV = clamp(projUV, 0.001, 0.999);
         float2 pDU = float2(projUV.x, (projUV.y * 1080.0 + 1.0) / 1082.0);
         float pDM = depthTex.sample(s, pDU).r;
@@ -1759,14 +1787,15 @@ fragment float4 smoke_god_fs(
         // God-ray: fog lights up where ray passes through body's "light"
         float lit = nearBody ? (1.5 + bass * 1.0) : 0.4;
 
-        // Hue: warm gold near body, cool blue in shadows
-        float hue = nearBody ? fract(0.10 + t * 0.02 + bass * 0.05) : fract(0.58 + t * 0.01);
-        float3 emit = hsv2rgb(float3(hue, 0.5, 1.0)) * lit * (0.4 + treb * 0.6);
+        // Hue: lit-side and shadow-side both user-controlled.
+        float hue = nearBody ? fract(litHue + t * 0.02 + bass * 0.05)
+                              : fract(shadowHue + t * 0.01);
+        float3 emit = hsv2rgb(float3(hue, saturation, 1.0)) * lit * (0.4 + treb * 0.6);
 
-        // Ember sparks on onset
-        if (u.onset > 0.5) {
+        // Ember sparks on onset (user-tunable strength).
+        if (u.onset > 0.5 && emberStr > 0.001) {
             float spark = step(0.998, fract(sin(dot(q.xy + q.z * 13.0, float2(12.9, 78.2))) * 4357.5));
-            emit += float3(2.5, 1.5, 0.5) * spark;
+            emit += float3(2.5, 1.5, 0.5) * spark * emberStr;
         }
 
         float a = 1.0 - exp(-density * dz * 5.0);

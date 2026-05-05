@@ -232,6 +232,114 @@ struct SidePanel: View {
         if manager.visualization == .strandVeil {
             strandVeilSection
         }
+
+        if manager.visualization == .nebula {
+            nebulaSection
+        }
+
+        if manager.visualization == .smokeGod {
+            smokeGodSection
+        }
+    }
+
+    @ViewBuilder
+    private var smokeGodSection: some View {
+        let cfg = manager.smokeGod
+        GroupBox("Smoke God — March") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Steps", value: "\(cfg.marchSteps)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.marchSteps) },
+                        set: { cfg.marchSteps = Int($0) }
+                    ),
+                    in: 16...64, step: 1
+                )
+
+                LabeledContent("Threshold", value: String(format: "%.2f", cfg.densityThreshold))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).densityThreshold, in: 0.20...0.60)
+
+                LabeledContent("Density", value: String(format: "%.2f", cfg.densityScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).densityScale, in: 0.3...2.5)
+
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
+
+        GroupBox("Smoke God — Two-tone Palette") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Lit Hue", value: String(format: "%.2f", cfg.litHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).litHue, in: 0...1)
+
+                LabeledContent("Shadow Hue", value: String(format: "%.2f", cfg.shadowHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).shadowHue, in: 0...1)
+
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+
+                LabeledContent("Embers", value: String(format: "%.2f", cfg.emberStrength))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).emberStrength, in: 0...3)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var nebulaSection: some View {
+        let cfg = manager.nebula
+        GroupBox("Nebula — Quality") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("March Steps", value: "\(cfg.marchSteps)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.marchSteps) },
+                        set: { cfg.marchSteps = Int($0) }
+                    ),
+                    in: 16...64, step: 1
+                )
+
+                LabeledContent("Threshold", value: String(format: "%.2f", cfg.densityThreshold))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).densityThreshold, in: 0.30...0.60)
+
+                LabeledContent("Density", value: String(format: "%.2f", cfg.densityScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).densityScale, in: 0.5...3.0)
+
+                LabeledContent("Noise Scale", value: String(format: "%.2f", cfg.noiseScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).noiseScale, in: 0.5...2.5)
+            }
+        }
+
+        GroupBox("Nebula — Color & Body") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+
+                LabeledContent("Body Void", value: String(format: "%.2f", cfg.bodyVoid))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyVoid, in: 0...1)
+
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
     }
 
     @ViewBuilder

@@ -29,6 +29,8 @@ struct VisualizerInputs {
     let mocapConstellation: MocapConstellationConfig
     let sandMandala: SandMandalaConfig
     let strandVeil: StrandVeilConfig
+    let nebula: NebulaConfig
+    let smokeGod: SmokeGodConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

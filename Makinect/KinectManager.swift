@@ -115,6 +115,8 @@ final class KinectManager {
     let mocapConstellation = MocapConstellationConfig()
     let sandMandala = SandMandalaConfig()
     let strandVeil = StrandVeilConfig()
+    let nebula = NebulaConfig()
+    let smokeGod = SmokeGodConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

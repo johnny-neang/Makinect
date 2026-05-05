@@ -7,9 +7,15 @@
 
 import Metal
 import MetalKit
+import simd
 
 @MainActor
 final class NebulaVisualizer: Visualizer {
+    private struct Params {
+        var march: SIMD4<Float>     // (steps, threshold, densityScale, audioCoupling)
+        var palette: SIMD4<Float>   // (baseHue, saturation, bodyVoid, noiseScale)
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -35,9 +41,17 @@ final class NebulaVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.nebula
+        var params = Params(
+            march:   SIMD4<Float>(Float(cfg.marchSteps), cfg.densityThreshold,
+                                  cfg.densityScale, cfg.audioCoupling),
+            palette: SIMD4<Float>(cfg.baseHue, cfg.saturation, cfg.bodyVoid, cfg.noiseScale)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }
