@@ -177,6 +177,13 @@ final class AudioEngine {
     func start() {
         guard !isRunning else { return }
 
+        // Tear down any prior tap + stop, regardless of `isRunning` state.
+        // AVAudioEngine sometimes keeps a tap registered even when the
+        // engine isn't running, and installTap() throws an uncatchable
+        // Obj-C exception if a tap already exists.
+        engine.inputNode.removeTap(onBus: 0)
+        if engine.isRunning { engine.stop() }
+
         // CRITICAL: reset the engine before binding the device. Without this,
         // AVAudioEngine's internal format cache holds the previous device's
         // sample rate, and installTap() throws an UNCATCHABLE Obj-C exception
@@ -186,28 +193,41 @@ final class AudioEngine {
         //   *** Terminating app due to uncaught exception 'com.apple.coreaudio.avfaudio'
         //
         // engine.reset() flushes that cache. Then we bind the device, then
-        // we read the (now-correct) format off the input node.
+        // we read the (now-correct) format directly from CoreAudio.
         engine.reset()
 
-        if let target = selectedInputID, target != 0 {
+        let target = (selectedInputID != nil && selectedInputID != 0) ? selectedInputID! : systemDefaultInputDevice()
+        if target != 0 {
             bindEngineInput(to: target)
         }
 
         let input = engine.inputNode
-        // inputFormat(forBus:) reflects the actual hardware bus format AFTER
-        // the device bind, where outputFormat(forBus:) can lag because it
-        // describes what the node OUTPUTS (post any internal SR conversion).
-        let format = input.inputFormat(forBus: 0)
+
+        // Build the tap format from CoreAudio HAL properties on the actual
+        // device, NOT from AVAudioEngine. Reason: after a device bind,
+        // AVAudioEngine's inputFormat(forBus:) can still report the engine's
+        // *processing* format (commonly 48 kHz) instead of the HW's nominal
+        // sample rate. Passing `format: nil` to installTap has the same
+        // problem — it resolves to the bus's *output* format.
+        //
+        // The HAL device properties (kAudioDevicePropertyNominalSampleRate +
+        // kAudioDevicePropertyStreamConfiguration) are the ground truth.
+        let format: AVAudioFormat
+        if target != 0, let hw = halInputFormat(deviceID: target) {
+            format = hw
+        } else {
+            format = input.inputFormat(forBus: 0)
+        }
         guard format.channelCount > 0, format.sampleRate > 0 else { return }
 
-        // Defensive removal — installTap throws if a tap is already present.
-        input.removeTap(onBus: 0)
-
-        // Pass `format: nil` so AVAudioEngine fetches the source bus's actual
-        // current format itself instead of trusting the value we hand it.
-        // This is the canonical defense against the "format mismatch" crash
-        // when the input device's sample rate doesn't match what we cached.
-        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(AudioEngine.fftSize), format: nil) { [weak self] buffer, _ in
+        // Pass the explicit HW format. Without this, the tap defaults to the
+        // engine's 48 kHz processing format and engine.start() fails graph
+        // initialization with kAudioUnitErr_FormatNotSupported (-10868).
+        input.installTap(
+            onBus: 0,
+            bufferSize: AVAudioFrameCount(AudioEngine.fftSize),
+            format: format
+        ) { [weak self] buffer, _ in
             self?.process(buffer: buffer)
         }
 
@@ -219,6 +239,69 @@ final class AudioEngine {
             input.removeTap(onBus: 0)
             isRunning = false
         }
+    }
+
+    /// Return the system default input device ID, or 0 if unavailable.
+    /// Used as a fallback when `selectedInputID` is unset.
+    private func systemDefaultInputDevice() -> AudioDeviceID {
+        var id: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id)
+        return id
+    }
+
+    /// Build an AVAudioFormat from the device's actual HAL properties — the
+    /// ground truth, immune to AVAudioEngine's format cache.
+    private func halInputFormat(deviceID: AudioDeviceID) -> AVAudioFormat? {
+        guard deviceID != 0 else { return nil }
+
+        // Nominal sample rate
+        var rate: Float64 = 0
+        var rateSize = UInt32(MemoryLayout<Float64>.size)
+        var rateAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(deviceID, &rateAddr, 0, nil, &rateSize, &rate) == noErr,
+              rate > 0 else { return nil }
+
+        // Channel count from input stream configuration
+        var ch: UInt32 = 1
+        var chAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var chSize: UInt32 = 0
+        if AudioObjectGetPropertyDataSize(deviceID, &chAddr, 0, nil, &chSize) == noErr, chSize > 0 {
+            let buf = UnsafeMutableRawPointer.allocate(
+                byteCount: Int(chSize),
+                alignment: MemoryLayout<AudioBufferList>.alignment
+            )
+            defer { buf.deallocate() }
+            if AudioObjectGetPropertyData(deviceID, &chAddr, 0, nil, &chSize, buf) == noErr {
+                let bl = UnsafeMutableAudioBufferListPointer(buf.assumingMemoryBound(to: AudioBufferList.self))
+                let total = bl.reduce(UInt32(0)) { $0 + $1.mNumberChannels }
+                if total > 0 { ch = total }
+            }
+        }
+
+        // Match the HW channel count exactly — installTap fails with a
+        // format-mismatch crash if the tap channel count differs from the
+        // bus's actual channel count (just like sample-rate mismatch). Our
+        // DSP only reads channelData[0] so 1 or 2 channels both work.
+        return AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: rate,
+            channels: AVAudioChannelCount(max(1, min(2, Int(ch)))),
+            interleaved: false
+        )
     }
 
     func stop() {
