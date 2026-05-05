@@ -118,6 +118,7 @@ final class KinectManager {
     let nebula = NebulaConfig()
     let smokeGod = SmokeGodConfig()
     let volumetricAurora = VolumetricAuroraConfig()
+    let plasmaSea = PlasmaSeaConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

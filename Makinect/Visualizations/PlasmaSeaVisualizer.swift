@@ -7,16 +7,20 @@
 //   - Joanie Lemercier — La Pluie, Constellations
 //   - Memo Akten — Waves: Serenity (fxhash)
 //
-// Why it beats the old caustic_waves: that one summed sines on a 2D plane.
-// This raymarches a full 3D refractive volume per pixel, splits R/G/B by
-// wavelength for real chromatic dispersion, and accumulates with HDR + ACES
-// tone-mapping. It's a volumetric integral, not a surface trick.
+// User controls (PlasmaSeaConfig): wave scale + speed + dispersion + audio
+// coupling, deep/lit hue shifts, body subsurface glow color, brightness.
 
 import Metal
 import MetalKit
+import simd
 
 @MainActor
 final class PlasmaSeaVisualizer: Visualizer {
+    private struct Params {
+        var wave: SIMD4<Float>      // (waveScale, waveSpeed, dispersion, audioCoupling)
+        var palette: SIMD4<Float>   // (deepHueShift, litHueShift, bodyGlowHue, brightness)
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -41,9 +45,17 @@ final class PlasmaSeaVisualizer: Visualizer {
         if b.count >= 8 {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
+
+        let cfg = inputs.plasmaSea
+        var params = Params(
+            wave:    SIMD4<Float>(cfg.waveScale, cfg.waveSpeed, cfg.dispersion, cfg.audioCoupling),
+            palette: SIMD4<Float>(cfg.deepHueShift, cfg.litHueShift, cfg.bodyGlowHue, cfg.brightness)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

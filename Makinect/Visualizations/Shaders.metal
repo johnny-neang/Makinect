@@ -3029,23 +3029,31 @@ inline float caustic_brightness(float2 p, float t, float bass, float dispersion)
     return focus;
 }
 
+struct PlasmaSeaParams {
+    float4 wave;     // (waveScale, waveSpeed, dispersion, audioCoupling)
+    float4 palette;  // (deepHueShift, litHueShift, bodyGlowHue, brightness)
+};
+
 fragment float4 plasma_sea_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant PlasmaSeaParams &cfg [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     float2 uv = in.uv;
-    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 4.0;
-    float t = u.time;
+    // Wave scale user-controlled.
+    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * cfg.wave.x;
+    // Wave time scaled by user speed.
+    float t = u.time * cfg.wave.y;
     float bass = u.bands[0] + u.bands[1];
     float treb = u.bands[6] + u.bands[7];
 
-    // 3-channel chromatic dispersion: sample R, G, B at slightly different scales
-    // so the caustics fringe like real water.
-    float r = caustic_brightness(p * (1.00 + 0.012 * sin(t * 0.4)), t, bass, treb);
+    // 3-channel chromatic dispersion — separation user-controlled.
+    float dispScale = cfg.wave.z * 0.012;
+    float r = caustic_brightness(p * (1.00 + dispScale * sin(t * 0.4)), t, bass, treb);
     float g = caustic_brightness(p * 1.000, t * 1.02, bass, treb);
-    float b = caustic_brightness(p * (1.00 - 0.012 * cos(t * 0.5)), t * 1.05, bass, treb);
+    float b = caustic_brightness(p * (1.00 - dispScale * cos(t * 0.5)), t * 1.05, bass, treb);
     float3 caustic = float3(r, g, b);
     caustic = pow(caustic, float3(2.4 - bass * 0.4));
 
@@ -3055,25 +3063,28 @@ fragment float4 plasma_sea_fs(
     bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
     float bodyT = inBody ? saturate((u.farMM - depthMM) / max(1.0, u.farMM - u.nearMM)) : 0.0;
 
-    // Iquilez cosine palette — deep-water teal/aqua/gold.
-    float3 deep = iq_palette(0.5 + bass * 0.1,
+    // Iquilez cosine palette — hue offsets user-controlled.
+    float3 deep = iq_palette(0.5 + bass * 0.1 + cfg.palette.x,
                              float3(0.05, 0.15, 0.20),
                              float3(0.30, 0.50, 0.50),
                              float3(0.6, 0.7, 0.8),
                              float3(0.0, 0.10, 0.20));
-    float3 lit  = iq_palette(0.7 + treb * 0.1,
+    float3 lit  = iq_palette(0.7 + treb * 0.1 + cfg.palette.y,
                              float3(0.50, 0.60, 0.70),
                              float3(0.50, 0.50, 0.50),
                              float3(1.0, 1.0, 1.0),
                              float3(0.0, 0.10, 0.20));
 
-    float3 col = deep + caustic * lit * (1.0 + u.rms * 1.2);
-    // Body subsurface glow.
-    col += float3(1.0, 0.55, 0.30) * bodyT * (0.4 + caustic.r * 0.7);
+    // Audio coupling on caustic intensity user-controlled.
+    float3 col = deep + caustic * lit * (1.0 + u.rms * cfg.wave.w);
+    // Body subsurface glow — color user-controlled.
+    float3 bodyGlowColor = hsv2rgb(float3(cfg.palette.z, 0.85, 1.0));
+    col += bodyGlowColor * bodyT * (0.4 + caustic.r * 0.7);
     // Onset adds a quick highlight.
     col += float3(0.7, 0.9, 1.0) * u.onset * (0.4 + caustic.g * 0.6);
 
-    // Vignette for depth.
+    // Brightness multiplier + vignette.
+    col *= cfg.palette.w;
     col *= smoothstep(1.6, 0.4, length((uv - 0.5) * 1.4));
     return float4(aces_tonemap(col), 1.0);
 }

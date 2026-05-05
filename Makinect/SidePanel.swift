@@ -244,6 +244,54 @@ struct SidePanel: View {
         if manager.visualization == .volumetricAurora {
             volumetricAuroraSection
         }
+
+        if manager.visualization == .plasmaSea {
+            plasmaSeaSection
+        }
+    }
+
+    @ViewBuilder
+    private var plasmaSeaSection: some View {
+        let cfg = manager.plasmaSea
+        GroupBox("Plasma Sea — Waves") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Wave Scale", value: String(format: "%.1f", cfg.waveScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).waveScale, in: 1...8)
+
+                LabeledContent("Wave Speed", value: String(format: "%.2f", cfg.waveSpeed))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).waveSpeed, in: 0...2)
+
+                LabeledContent("Dispersion", value: String(format: "%.2f", cfg.dispersion))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).dispersion, in: 0...2)
+
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...3)
+            }
+        }
+
+        GroupBox("Plasma Sea — Color") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Deep Hue", value: String(format: "%+.2f", cfg.deepHueShift))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).deepHueShift, in: -0.5...0.5)
+
+                LabeledContent("Lit Hue", value: String(format: "%+.2f", cfg.litHueShift))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).litHueShift, in: -0.5...0.5)
+
+                LabeledContent("Body Glow", value: String(format: "%.2f", cfg.bodyGlowHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyGlowHue, in: 0...1)
+
+                LabeledContent("Brightness", value: String(format: "%.2f", cfg.brightness))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).brightness, in: 0.3...2)
+            }
+        }
     }
 
     @ViewBuilder
