@@ -33,6 +33,8 @@ struct VisualizerInputs {
     let smokeGod: SmokeGodConfig
     let volumetricAurora: VolumetricAuroraConfig
     let plasmaSea: PlasmaSeaConfig
+    let vortexRingSmoke: VortexRingSmokeConfig
+    let filamentCosmology: FilamentCosmologyConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

@@ -36,6 +36,7 @@ final class VortexRingSmokeVisualizer: Visualizer {
     private struct VRUniforms {
         var ctrl: SIMD4<Float>     // (time, count, aspect, _)
         var audio: SIMD4<Float>    // (rms, onset, bassLow, treb)
+        var style: SIMD4<Float>    // (swirlFreq, saturation, bodyBoost, _)
     }
 
     private let pipeline: MTLRenderPipelineState
@@ -62,12 +63,11 @@ final class VortexRingSmokeVisualizer: Visualizer {
         let bands = inputs.audio.bands
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
+        let cfg = inputs.vortexRingSmoke
 
-        // Tick.
+        // Tick — rise speed user-controlled.
         for i in rings.indices where rings[i].alive {
-            // Self-induced rise (vortex rings drift along their axis).
-            rings[i].y -= 0.0018 + bassLow * 0.0035
-            // Lateral drift + a tiny swirl.
+            rings[i].y -= cfg.riseSpeed + bassLow * 0.0035
             rings[i].x += sin(rings[i].age * 0.05) * 0.0008
             rings[i].radius += 0.00045 + treb * 0.0008
             rings[i].age += 1
@@ -76,9 +76,9 @@ final class VortexRingSmokeVisualizer: Visualizer {
             }
         }
 
-        // Spawn rings on onset OR periodically while loud.
+        // Spawn rings on onset OR periodically while loud (interval tunable).
         let shouldSpawn = (inputs.audio.onset && lastOnset < 0.5) ||
-                         (inputs.timeSeconds - lastSpawn > 1.2 && inputs.audio.rms > 0.05)
+                         (inputs.timeSeconds - lastSpawn > cfg.spawnInterval && inputs.audio.rms > 0.05)
         if shouldSpawn {
             lastSpawn = inputs.timeSeconds
             spawnRing(audio: inputs.audio)
@@ -108,7 +108,8 @@ final class VortexRingSmokeVisualizer: Visualizer {
         var u = VRUniforms(
             ctrl: SIMD4<Float>(inputs.timeSeconds, Float(uploaded),
                                Float(view.drawableSize.width / max(1, view.drawableSize.height)), 0),
-            audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb)
+            audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
+            style: SIMD4<Float>(cfg.swirlFreq, cfg.saturation, cfg.bodyBoost, 0)
         )
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)

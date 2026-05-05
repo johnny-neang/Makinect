@@ -248,6 +248,80 @@ struct SidePanel: View {
         if manager.visualization == .plasmaSea {
             plasmaSeaSection
         }
+
+        if manager.visualization == .vortexRingSmoke {
+            vortexRingSmokeSection
+        }
+
+        if manager.visualization == .filamentCosmology {
+            filamentCosmologySection
+        }
+    }
+
+    @ViewBuilder
+    private var vortexRingSmokeSection: some View {
+        let cfg = manager.vortexRingSmoke
+        GroupBox("Vortex Ring Smoke") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Spawn Interval", value: String(format: "%.1fs", cfg.spawnInterval))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).spawnInterval, in: 0.3...3.0)
+
+                LabeledContent("Rise Speed", value: String(format: "%.4f", cfg.riseSpeed))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).riseSpeed, in: 0...0.005)
+
+                LabeledContent("Swirl Freq", value: String(format: "%.1f", cfg.swirlFreq))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).swirlFreq, in: 4...16)
+
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+
+                LabeledContent("Body Boost", value: String(format: "%.2f", cfg.bodyBoost))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyBoost, in: 0...2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var filamentCosmologySection: some View {
+        let cfg = manager.filamentCosmology
+        GroupBox("Filament Cosmology") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("March Steps", value: "\(cfg.marchSteps)")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.marchSteps) },
+                        set: { cfg.marchSteps = Int($0) }
+                    ),
+                    in: 12...72, step: 1
+                )
+
+                LabeledContent("Threshold", value: String(format: "%.2f", cfg.filamentThreshold))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).filamentThreshold, in: 0.30...0.80)
+
+                LabeledContent("Worley Scale", value: String(format: "%.2f", cfg.worleyScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).worleyScale, in: 0.5...3.0)
+
+                LabeledContent("Lens Strength", value: String(format: "%.2f", cfg.lensStrength))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).lensStrength, in: 0...1)
+
+                LabeledContent("Hue Shift", value: String(format: "%+.2f", cfg.hueShift))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueShift, in: -0.5...0.5)
+
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...3)
+            }
+        }
     }
 
     @ViewBuilder

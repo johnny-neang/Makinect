@@ -4090,6 +4090,7 @@ fragment float4 bm_bird_fs(BMOut in [[stage_in]]) {
 struct VRUniforms {
     float4 ctrl;     // (time, count, aspect, _)
     float4 audio;    // (rms, onset, bassLow, treb)
+    float4 style;    // (swirlFreq, saturation, bodyBoost, _)
 };
 
 struct VRRing {
@@ -4121,21 +4122,21 @@ fragment float4 vortex_ring_fs(
         float band = exp(-pow(dist - r.posSize.z, 2.0) / (r.posSize.w * r.posSize.w));
         // Inner and outer edges have soft glow.
         float core = exp(-pow(dist - r.posSize.z, 2.0) / (r.posSize.w * r.posSize.w * 0.25));
-        float3 hue = hsv2rgb(float3(r.hueAge.x, 0.5, 1.0));
+        float3 hue = hsv2rgb(float3(r.hueAge.x, u.style.y, 1.0));
         col += hue * (band * 0.5 + core * 0.6) * r.hueAge.z * (0.7 + u.audio.x * 0.6);
 
-        // Swirling fine structure inside the band — vortex curling.
+        // Swirling fine structure inside the band — frequency user-controlled.
         float a = atan2(p.y - c.y, p.x - c.x);
-        float swirl = sin(a * 8.0 - t * 3.0 - r.hueAge.y * 0.3) * 0.5 + 0.5;
+        float swirl = sin(a * u.style.x - t * 3.0 - r.hueAge.y * 0.3) * 0.5 + 0.5;
         col += hue * band * swirl * 0.25;
     }
 
-    // Body presence makes nearby smoke glow warmer (silhouette-illuminated).
+    // Body presence makes nearby smoke glow warmer (boost user-controlled).
     constexpr sampler ss(filter::linear, address::clamp_to_edge);
     float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
     float mm = depthTex.sample(ss, du).r;
     bool inBody = mm > 500.0 && mm < 4000.0 && mm > 0;
-    if (inBody) col *= 1.2;
+    if (inBody) col *= u.style.z;
 
     col += float3(0.5, 0.7, 1.0) * u.audio.y * 0.3;
     col *= smoothstep(1.6, 0.4, length((uv - 0.5) * 1.3));
@@ -4169,10 +4170,16 @@ inline float filament_density(float3 p, float t) {
     return ridge * (0.6 + drift);
 }
 
+struct FilamentParams {
+    float4 cfg;   // (marchSteps, threshold, lensStrength, audioCoupling)
+    float4 misc;  // (hueShift, worleyScale, _, _)
+};
+
 fragment float4 filament_cosmology_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant FilamentParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     float2 uv = in.uv;
@@ -4196,25 +4203,35 @@ fragment float4 filament_cosmology_fs(
         bool b = m > u.nearMM && m < u.farMM && m > 0;
         if (b) grad += off;
     }
-    p2 -= grad * 0.4 * (1.0 + bass);  // lens pull
+    // User-tunable lens strength.
+    p2 -= grad * p.cfg.z * (1.0 + bass);
 
     float3 ro = float3(p2, -2.5);
     float3 rd = normalize(float3(p2 * 0.4, 1.0));
 
-    const int STEPS = 36;
+    int STEPS = clamp(int(p.cfg.x), 12, 72);
     float3 acc = float3(0);
     float trans = 1.0;
     float zNear = 0.5, zFar = 5.0;
     float dz = (zFar - zNear) / float(STEPS);
+    float threshold = p.cfg.y;
+    float audioCoupling = p.cfg.w;
+    float worleyScale = p.misc.y;
+    float hueShift = p.misc.x;
 
-    for (int i = 0; i < STEPS; i++) {
+    for (int i = 0; i < 72; i++) {
+        if (i >= STEPS) break;
         float z = zNear + (float(i) + 0.5) * dz;
         float3 q = ro + rd * z;
         q += float3(sin(t * 0.05 + q.z), cos(t * 0.07 - q.z), t * 0.03);
-        float density = filament_density(q, t);
-        density = pow(saturate(density - 0.55), 1.7) * (1.5 + u.rms * 1.5);
+        // Worley scale + threshold user-controlled.
+        float w = worley3(q * worleyScale);
+        float ridge = exp(-w * 4.0);
+        float drift = noise3(q * 0.7 + t * 0.05) * 0.5;
+        float density = ridge * (0.6 + drift);
+        density = pow(saturate(density - threshold), 1.7) * (1.5 + u.rms * audioCoupling);
 
-        float3 emit = iq_palette(0.62 + bass * 0.2 + density * 0.2,
+        float3 emit = iq_palette(0.62 + hueShift + bass * 0.2 + density * 0.2,
                                  float3(0.5, 0.5, 0.6),
                                  float3(0.5, 0.5, 0.5),
                                  float3(1.0, 1.0, 0.8),

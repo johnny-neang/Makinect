@@ -119,6 +119,8 @@ final class KinectManager {
     let smokeGod = SmokeGodConfig()
     let volumetricAurora = VolumetricAuroraConfig()
     let plasmaSea = PlasmaSeaConfig()
+    let vortexRingSmoke = VortexRingSmokeConfig()
+    let filamentCosmology = FilamentCosmologyConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {
