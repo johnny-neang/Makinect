@@ -1091,10 +1091,17 @@ fragment float4 voxel_sculpt_fs(
 // combs the whole plumage in a wind direction. Onset cuts a stripe of feathers
 // outward as if a gust passed through.
 
+struct PlumageParams {
+    float4 cfg;   // (featherSize, bassGravityComb, trebleRuffle, hueOffset)
+    float4 misc;  // (highlightHueOffset, gustStrength, subSurface, audioGlow)
+    float4 misc2; // (saturation, _, _, _)
+};
+
 fragment float4 plumage_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant PlumageParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -1130,9 +1137,10 @@ fragment float4 plumage_fs(
     float3 n = normalize(float3(-dx, -dy, 1.0));
 
     // — Cellular feather grid, biased downward by bass (gravity comb).
-    float cellSize = 0.018 - bass * 0.004 + treb * 0.002;
+    float cellSize = p.cfg.x - bass * 0.004 + treb * 0.002;
     cellSize = max(cellSize, 0.008);
-    float2 windOffset = float2(sin(t * 0.6) * 0.005, bass * 0.020);
+    float gravityComb = p.cfg.y;
+    float2 windOffset = float2(sin(t * 0.6) * 0.005, bass * 0.020 * gravityComb);
     float2 fUV = (uv + windOffset) / cellSize;
     float2 cellI = floor(fUV);
     float2 cellF = fract(fUV) - 0.5;
@@ -1143,10 +1151,11 @@ fragment float4 plumage_fs(
     // Per-cell base orientation (radians)
     float baseAng = (cellHash - 0.5) * 0.6;
     // Add a global wind direction component
-    float windAng = sin(t * 0.4 + cellI.x * 0.07) * 0.3 + bass * 0.4;
+    float windAng = sin(t * 0.4 + cellI.x * 0.07) * 0.3 + bass * 0.4 * gravityComb;
     float ang = baseAng + windAng;
-    // Treble adds high-frequency ruffle
-    ang += sin(t * 8.0 + cellHash2 * 13.0) * treb * 0.15;
+    // Treble adds high-frequency ruffle (user-controlled).
+    float trebleRuffle = p.cfg.z;
+    ang += sin(t * 8.0 + cellHash2 * 13.0) * treb * 0.15 * trebleRuffle;
 
     float ca = cos(ang);
     float sa = sin(ang);
@@ -1168,20 +1177,23 @@ fragment float4 plumage_fs(
     feather = saturate(feather);
 
     // — Onset: cut a horizontal stripe across the feathers (gust pass).
-    if (u.onset > 0.001) {
+    float gustStrength = p.misc.y;
+    if (u.onset > 0.001 && gustStrength > 0.001) {
         float gustY = fract(t * 0.5) * 2.0 - 0.5;
         float gustDist = abs(uv.y - gustY);
-        feather *= 0.3 + smoothstep(0.0, 0.08, gustDist) * 0.7;
+        feather *= mix(1.0, 0.3 + smoothstep(0.0, 0.08, gustDist) * 0.7, saturate(gustStrength));
     }
 
     // — Thin-film color: hue cycles with view-angle dot product on normal.
     float viewDot = saturate(dot(n, float3(0, 0, 1)));
-    float hueBase = fract(0.40 + cellHash * 0.20 + cellHash2 * 0.10);
+    float hueBase = fract(0.40 + cellHash * 0.20 + cellHash2 * 0.10 + p.cfg.w);
     float hueShift = (1.0 - viewDot) * 0.4 + bass * 0.15 + t * 0.04;
     float hue = fract(hueBase + hueShift);
-    float3 baseCol = hsv2rgb(float3(hue, 0.7 + treb * 0.2, 1.0));
-    // Iridescent secondary — second hue for highlight color
-    float3 highlight = hsv2rgb(float3(fract(hue + 0.55), 0.85, 1.0));
+    float sat = clamp(p.misc2.x * (0.7 + treb * 0.2), 0.0, 1.0);
+    float3 baseCol = hsv2rgb(float3(hue, sat, 1.0));
+    // Iridescent secondary — second hue for highlight color (user-controlled).
+    float highlightOff = p.misc.x;
+    float3 highlight = hsv2rgb(float3(fract(hue + highlightOff), 0.85, 1.0));
 
     // — Lighting
     float3 keyDir = normalize(float3(0.4, 0.7, 0.6));
@@ -1192,12 +1204,14 @@ fragment float4 plumage_fs(
     col += baseCol * feather * 1.8 * key;
     col += highlight * pow(feather, 4.0) * 0.8;
 
-    // Audio glow
-    col += float3(0.10, 0.05, 0.20) * (bass * 0.6 + u.rms * 0.5);
-    col += float3(0.40, 0.20, 0.50) * u.onset * 0.40;
+    // Audio glow (user-scaled).
+    float audioGlow = p.misc.w;
+    col += float3(0.10, 0.05, 0.20) * (bass * 0.6 + u.rms * 0.5) * audioGlow;
+    col += float3(0.40, 0.20, 0.50) * u.onset * 0.40 * audioGlow;
 
-    // Sub-surface scattering hint at deep cells
-    col += hsv2rgb(float3(fract(hue + 0.5), 0.5, 1.0)) * 0.10;
+    // Sub-surface scattering hint at deep cells (user-scaled).
+    float sss = p.misc.z;
+    col += hsv2rgb(float3(fract(hue + 0.5), 0.5, 1.0)) * 0.10 * sss;
 
     // Vignette
     col *= smoothstep(1.5, 0.4, length((uv - 0.5) * 1.4));
@@ -1879,54 +1893,68 @@ fragment float4 smoke_god_fs(
 // emanate from the rosette center and scatter through dust-mote air. Body acts
 // as occluder, casting shafts.
 
+struct CathedralParams {
+    float4 cfg;   // (sectorCount, ringCount, traceryWidth, innerGlow)
+    float4 misc;  // (godRayStrength, dustIntensity, onsetFlash, bodyHaloHue)
+};
+
 fragment float4 stained_cathedral_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant CathedralParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
     float2 uv = in.uv;
-    float2 p = (uv - 0.5) * float2(u.aspect, 1.0);
+    float2 pt = (uv - 0.5) * float2(u.aspect, 1.0);
 
     float bass = u.bands[0] + u.bands[1];
     float mid = u.bands[3] + u.bands[4];
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    float r = length(p);
-    float ang = atan2(p.y, p.x);
+    float r = length(pt);
+    float ang = atan2(pt.y, pt.x);
     if (ang < 0) ang += 6.2831853;
 
-    // — Rosette window: 12-fold radial symmetry with concentric rings
-    int sectorIdx = int(ang * 12.0 / 6.2831853);
-    sectorIdx = clamp(sectorIdx, 0, 11);
-    float sectorAng = fmod(ang * 12.0 / 6.2831853, 1.0);
-    float ringIdx = floor(r * 8.0);
-    float ringFract = fract(r * 8.0);
+    // — Rosette window: N-fold radial symmetry, M concentric rings (user-controlled).
+    float sectorCountF = max(1.0, p.cfg.x);
+    float ringCountF = max(1.0, p.cfg.y);
+    int sectorCount = int(sectorCountF);
+    int ringCount = int(ringCountF);
+    int sectorIdx = int(ang * sectorCountF / 6.2831853);
+    sectorIdx = clamp(sectorIdx, 0, sectorCount - 1);
+    float sectorAng = fmod(ang * sectorCountF / 6.2831853, 1.0);
+    float ringIdx = floor(r * ringCountF);
+    float ringFract = fract(r * ringCountF);
 
-    // Lead tracery: dark lines between sectors and rings
-    float sectorLead = smoothstep(0.05, 0.12, abs(sectorAng - 0.5));
-    float ringLead = smoothstep(0.08, 0.20, abs(ringFract - 0.5));
+    // Lead tracery: dark lines between sectors and rings (width user-controlled).
+    float traceryW = clamp(p.cfg.z, 0.2, 3.0);
+    float sectorLead = smoothstep(0.05 * traceryW, 0.12 * traceryW, abs(sectorAng - 0.5));
+    float ringLead = smoothstep(0.08 * traceryW, 0.20 * traceryW, abs(ringFract - 0.5));
     float traceryMask = sectorLead * ringLead;
 
     // Glass color: each sector gets a hue mapped to its index (rainbow rosette)
-    float sectorHue = fract(float(sectorIdx) / 12.0 + bass * 0.10 + t * 0.02);
+    float sectorHue = fract(float(sectorIdx) / sectorCountF + bass * 0.10 + t * 0.02);
     float ringHueShift = ringFract * 0.15;
     float3 glassColor = hsv2rgb(float3(fract(sectorHue + ringHueShift), 0.85, 1.0));
+    (void)ringIdx; (void)ringCount;
 
     // Audio: each sector responds to one band (cycling through 8)
     int bandIdx = sectorIdx % 8;
     float bandStrength = u.bands[bandIdx];
     glassColor *= 0.5 + bandStrength * 2.0;
 
-    // Inner rosette fades to bright cathedral light at center
+    // Inner rosette fades to bright cathedral light at center (user-scaled).
+    float innerGlowScale = max(0.0, p.cfg.w);
     float innerGlow = exp(-r * 4.0) * (0.5 + u.rms * 0.5);
-    float3 innerLight = float3(1.0, 0.95, 0.85) * innerGlow * 1.5;
+    float3 innerLight = float3(1.0, 0.95, 0.85) * innerGlow * innerGlowScale;
 
     // — God-rays: sample depth along radial direction; if body is between center
-    //   and this pixel, dim the light here.
-    float2 toCenter = -p;
+    //   and this pixel, dim the light here. (Strength user-controlled.)
+    float godRay = max(0.0, p.misc.x);
+    float2 toCenter = -pt;
     float2 lightDir = normalize(toCenter);
     float occluded = 0.0;
     int rayMarchSteps = 8;
@@ -1939,8 +1967,10 @@ fragment float4 stained_cathedral_fs(
         if (sDM > u.nearMM && sDM < u.farMM && sDM > 0) occluded += 1.0;
     }
     occluded /= float(rayMarchSteps);
+    occluded *= godRay;
 
-    // — Atmospheric dust motes (animated noise)
+    // — Atmospheric dust motes (animated noise, user-scaled).
+    float dustScale = max(0.0, p.misc.y);
     float dust = noise2(uv * 100.0 + t * 0.5) * (1.0 - occluded * 0.7);
 
     // — Body pixel: glow brightly with the spectrum from this position's sector
@@ -1952,17 +1982,20 @@ fragment float4 stained_cathedral_fs(
     float3 col = glassColor * traceryMask * (1.0 - occluded * 0.5);
     col = mix(float3(0.02, 0.018, 0.030), col, traceryMask);  // lead is dark
     col += innerLight;
-    col += float3(0.95, 0.92, 0.78) * dust * 0.20;
+    col += float3(0.95, 0.92, 0.78) * dust * dustScale;
 
     if (inBody) {
-        // Body pool of light underfoot — saintly halo
+        // Body pool of light underfoot — saintly halo (hue shift user-controlled).
+        float haloHue = p.misc.w;
+        float3 haloTint = hsv2rgb(float3(fract(haloHue + 0.10), 0.30, 1.0));
         col = glassColor * (0.6 + bass * 0.6 + u.rms * 0.8);
-        col += float3(1.0, 0.95, 0.80) * 0.40;
+        col += haloTint * 0.40;
     }
 
-    // Onset: organ pulse — bright flash + glass rotation
+    // Onset: organ pulse — bright flash (user-controlled).
+    float flash = max(0.0, p.misc.z);
     if (u.onset > 0.5) {
-        col += float3(0.6, 0.55, 0.45) * 0.40;
+        col += float3(0.6, 0.55, 0.45) * flash;
     }
 
     // ACES tone curve
@@ -2081,10 +2114,16 @@ fragment float4 aurora_fs(
 // shifts color sample positions based on local depth gradient. The body becomes
 // a god-eye lens distorting the underwater world.
 
+struct GlassOceanParams {
+    float4 cfg;   // (refractionStrength, causticsIntensity, coralHue, jellyCount)
+    float4 misc;  // (jellySize, rimStrength, aberration, onsetRipple)
+};
+
 fragment float4 glass_ocean_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant GlassOceanParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -2109,7 +2148,8 @@ fragment float4 glass_ocean_fs(
     if (dB <= 0 || dB > u.farMM) dB = depthMM;
     float dx = (dR - dL) * 0.0008;
     float dy = (dB - dT) * 0.0008;
-    float refractionAmount = inBody ? (0.05 + bass * 0.04) : 0.0;
+    float refractStrength = max(0.0, p.cfg.x);
+    float refractionAmount = inBody ? (0.05 + bass * 0.04) * refractStrength : 0.0;
     float2 refractedUV = uv - float2(dx, dy) * refractionAmount;
 
     // — Reef background (procedural sub-scene)
@@ -2128,18 +2168,20 @@ fragment float4 glass_ocean_fs(
     float3 medBlue = float3(0.02, 0.20, 0.35);
     float3 cyan = float3(0.15, 0.55, 0.65);
     float3 reef = mix(deepBlue, medBlue, smoothstep(0.0, 1.0, refractedUV.y));
-    reef += float3(0.8, 0.9, 1.0) * caustics * (0.4 + treb * 0.5);
+    float causticsScale = max(0.0, p.cfg.y);
+    reef += float3(0.8, 0.9, 1.0) * caustics * (0.4 + treb * 0.5) * causticsScale;
 
-    // Coral structures: vertical procedural shapes
+    // Coral structures: vertical procedural shapes (hue user-controlled).
     float coralPhase = sin(refractedUV.x * 30.0 + t * 0.3) * 0.5 + 0.5;
     float coralMask = smoothstep(0.7, 0.9, refractedUV.y) * smoothstep(0.0, 0.2, coralPhase);
-    float coralHue = fract(0.95 + bass * 0.15);
+    float coralHue = fract(p.cfg.z + bass * 0.15);
     float3 coralCol = hsv2rgb(float3(coralHue, 0.7, 1.0)) * coralMask * 1.5;
     reef += coralCol;
 
-    // Drifting jellies (slow procedural blobs)
-    int jellyCount = 8;
-    for (int i = 0; i < 8; i++) {
+    // Drifting jellies (count + size user-controlled).
+    int jellyCount = int(clamp(p.cfg.w, 0.0, 16.0));
+    float jellySizeBase = max(0.005, p.misc.x);
+    for (int i = 0; i < 16; i++) {
         if (i >= jellyCount) break;
         float fi = float(i);
         float2 jellyC = float2(
@@ -2147,7 +2189,7 @@ fragment float4 glass_ocean_fs(
             0.5 + 0.3 * cos(t * 0.2 + fi * 2.3)
         );
         float jDist = distance(refractedUV, jellyC);
-        float jSize = 0.04 + sin(t * 0.8 + fi) * 0.015;
+        float jSize = jellySizeBase + sin(t * 0.8 + fi) * 0.015;
         float jMask = exp(-jDist * jDist / (jSize * jSize));
         float jHue = fract(0.85 + fi * 0.13);
         float3 jCol = hsv2rgb(float3(jHue, 0.5, 1.0));
@@ -2156,22 +2198,23 @@ fragment float4 glass_ocean_fs(
 
     float3 col = reef;
 
-    // — Body pixels: glass distortion adds a colored fresnel-rim and chromatic split
+    // — Body pixels: glass distortion adds a colored fresnel-rim and chromatic split.
+    // rimStrength + aberration user-controlled.
     if (inBody) {
-        // Chromatic aberration on refracted samples
-        float aberr = 0.005 + bass * 0.005;
+        float aberrScale = max(0.0, p.misc.z);
+        float aberr = (0.005 + bass * 0.005) * aberrScale;
         float r = depthTex.sample(s, depthUV + float2(aberr, 0)).r;
-        // Reuse reef as background image at refracted position
         col = reef * (0.7 + u.rms * 0.4);
-        // Add rim
+        float rimScale = max(0.0, p.misc.y);
         float rimAmount = 1.0 - saturate(abs(dx) + abs(dy)) * 100.0;
         rimAmount = pow(saturate(1.0 - rimAmount), 4.0);
-        col += float3(0.7, 0.85, 1.0) * rimAmount * 0.6;
+        col += float3(0.7, 0.85, 1.0) * rimAmount * 0.6 * rimScale;
         (void)r;
     }
 
-    // Onset: lightning ripple
-    if (u.onset > 0.5) col += float3(0.4, 0.55, 0.65) * 0.30;
+    // Onset: lightning ripple (user-controlled).
+    float ripple = max(0.0, p.misc.w);
+    if (u.onset > 0.5) col += float3(0.4, 0.55, 0.65) * ripple;
 
     // ACES tone
     col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
@@ -2320,10 +2363,16 @@ fragment float4 mercury_storm_fs(
 // ink-bleed on fold edges. Onset triggers a refold transition. Inspiration:
 // Akira Yoshizawa's wet-folding technique, Es Devlin's *Forest of Us*, kirigami.
 
+struct OrigamiParams {
+    float4 cfg;   // (gridSize, foldSpeed, onsetRefold, paletteBalance)
+    float4 misc;  // (paperWarmth, inkBleed, audioCoupling, brushContrast)
+};
+
 fragment float4 origami_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant OrigamiParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -2337,22 +2386,28 @@ fragment float4 origami_fs(
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    // — Background: rice paper texture
+    // — Background: rice paper texture (paperWarmth user-controlled).
+    float warmth = saturate(p.misc.x);
     float paperGrain = noise2(uv * 600.0) * 0.05;
     float paperFiber = noise2(uv * float2(80.0, 40.0)) * 0.08;
-    float3 bg = float3(0.92, 0.88, 0.82) - paperGrain - paperFiber;
+    float3 paperCool = float3(0.93, 0.94, 0.95);
+    float3 paperWarm = float3(0.92, 0.88, 0.82);
+    float3 bg = mix(paperCool, paperWarm, warmth) - paperGrain - paperFiber;
     bg *= smoothstep(1.5, 0.4, length((uv - 0.5) * 1.4));
 
     if (!inBody) {
-        // Background paper with sumi-e brushstroke shadow
+        // Background paper with sumi-e brushstroke shadow (brushContrast user-scaled).
+        float brushContrast = max(0.0, p.misc.w);
         float brushStroke = noise2(uv * 5.0 + t * 0.03);
-        bg -= float3(0.10, 0.08, 0.05) * pow(brushStroke, 6.0) * 0.3;
+        bg -= float3(0.10, 0.08, 0.05) * pow(brushStroke, 6.0) * 0.3 * brushContrast;
         bg += float3(0.05, 0.02, 0.0) * u.onset * 0.20;
         return float4(bg, 1);
     }
 
-    // — Triangular tessellation: divide UV into triangles via skewed grid
-    float gridSize = 0.045 + treb * 0.015;
+    // — Triangular tessellation: divide UV into triangles via skewed grid.
+    // Grid size user-controlled, modulated by treble + audio coupling.
+    float audioCouple = p.misc.z;
+    float gridSize = max(0.005, p.cfg.x + treb * 0.015 * audioCouple);
     float2 tileUV = uv / gridSize;
 
     // Skew for triangular pattern
@@ -2365,11 +2420,13 @@ fragment float4 origami_fs(
     float triHash = hash21(cellI + (upperTri ? 17.3 : 31.7));
     float triHash2 = hash21(cellI + (upperTri ? 47.1 : 73.9));
 
-    // Each triangle has a "fold angle" — animates open/closed
-    float foldPhase = t * (0.6 + triHash * 0.5) + triHash * 6.28;
+    // Each triangle has a "fold angle" — animates open/closed (foldSpeed user-controlled).
+    float foldSpeed = max(0.0, p.cfg.y);
+    float foldPhase = t * (0.6 + triHash * 0.5) * foldSpeed + triHash * 6.28;
     float foldAng = sin(foldPhase) * 0.5 + 0.5;
-    // Onset: refold burst
-    if (u.onset > 0.5) foldAng = triHash;
+    // Onset: refold burst (onsetRefold user-controlled).
+    float refold = saturate(p.cfg.z);
+    if (u.onset > 0.5) foldAng = mix(foldAng, triHash, refold);
 
     // — Depth-based shading
     float dL = depthTex.sample(s, depthUV - float2(0.002, 0)).r;
@@ -2391,8 +2448,12 @@ fragment float4 origami_fs(
     // Per-triangle fold shading: brighter on "open" angles
     float foldShade = 0.5 + foldAng * 0.5;
 
-    // — Inkwash gradient color: chooses one of three palettes per triangle
-    float palette = triHash2 * 3.0;
+    // — Inkwash gradient color: paletteBalance user-controlled biases palette pick.
+    float balance = saturate(p.cfg.w);
+    // Re-bias triHash2 by balance: balance=0 favors palette 0 (sumi-amber), balance=1
+    // favors palette 2 (vermillion-gold). Mid stays distributed.
+    float biased = saturate(triHash2 + (balance - 0.5) * 0.8);
+    float palette = biased * 3.0;
     float3 inkwash;
     if (palette < 1.0) {
         // Sumi black + warm amber
@@ -2412,16 +2473,17 @@ fragment float4 origami_fs(
     float edgeDist = min(min(cellF.x, cellF.y), 1.0 - max(cellF.x, cellF.y));
     float creaseMask = smoothstep(0.0, 0.04, edgeDist);
 
-    // Calligraphy ink-bleed on crease (subtle dark feather)
-    float inkBleed = pow(1.0 - creaseMask, 2.0) * 0.30;
+    // Calligraphy ink-bleed on crease (subtle dark feather, user-scaled).
+    float inkScale = max(0.0, p.misc.y);
+    float inkBleed = pow(1.0 - creaseMask, 2.0) * 0.30 * inkScale;
     inkwash *= 1.0 - inkBleed;
 
     float3 col = inkwash * key * foldShade;
     col = mix(col * 0.4, col, creaseMask);  // edges darker
 
-    // Audio modulation
-    col += float3(0.10, 0.05, 0.05) * (bass * 0.4 + u.rms * 0.3);
-    col += float3(0.30, 0.20, 0.15) * u.onset * 0.30;
+    // Audio modulation (user-scaled).
+    col += float3(0.10, 0.05, 0.05) * (bass * 0.4 + u.rms * 0.3) * audioCouple;
+    col += float3(0.30, 0.20, 0.15) * u.onset * 0.30 * audioCouple;
 
     // Lens-blur bokeh feel: subtle blur halo on bright fold corners
     float bokeh = smoothstep(0.0, 0.05, edgeDist) * pow(foldAng, 4.0);
@@ -2441,29 +2503,37 @@ fragment float4 origami_fs(
 // crests at the center. Music carves its own coastline. Implemented as a polar
 // decomposition with audio bands sampled at angle-determined indices.
 
+struct SpectralOceanParams {
+    float4 cfg;   // (ringSpeed, bassRingSpeed, ringDensity, crestSharpness)
+    float4 misc;  // (deepHue, warmHue, bodyHaloHue, onsetWave)
+};
+
 fragment float4 spectral_ocean_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant SpectralOceanParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
     float2 uv = in.uv;
-    float2 p = (uv - 0.5) * float2(u.aspect, 1.0);
+    float2 pt = (uv - 0.5) * float2(u.aspect, 1.0);
 
     float bass = u.bands[0] + u.bands[1];
     float mid = u.bands[3] + u.bands[4];
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    float r = length(p);
-    float ang = atan2(p.y, p.x);
+    float r = length(pt);
+    float ang = atan2(pt.y, pt.x);
     if (ang < 0) ang += 6.2831853;
 
-    // — Ring index: each ring is one "frame" of audio history
-    // Ring scrolls outward: ring 0 is the center (now), ring N is N seconds ago
-    float ringSpeed = 0.20 + bass * 0.10;
-    float ringIdx = r * 30.0 - t * ringSpeed * 30.0;
+    // — Ring index: each ring is one "frame" of audio history (speed user-controlled).
+    float ringSpeedBase = max(0.0, p.cfg.x) * 0.20;
+    float ringSpeedBass = max(0.0, p.cfg.y) * 0.10;
+    float ringSpeed = ringSpeedBase + bass * ringSpeedBass;
+    float ringDensity = max(5.0, p.cfg.z);
+    float ringIdx = r * ringDensity - t * ringSpeed * ringDensity;
     float ringFract = fract(ringIdx);
 
     // Audio band sampled by angle (0..2π → bands 0..7)
@@ -2474,23 +2544,26 @@ fragment float4 spectral_ocean_fs(
     float ringAmp = bandStrength * (1.0 - r * 0.5);  // fade with distance
     ringAmp = pow(ringAmp, 0.7);
 
-    // Ring color from ring depth + audio
-    float3 ringHueA = float3(0.05, 0.30, 0.65);  // deep teal
-    float3 ringHueB = float3(0.95, 0.50, 0.30);  // warm coral
+    // Ring color from user-controlled deep/warm hues.
+    float deepH = p.misc.x;
+    float warmH = p.misc.y;
+    float3 ringHueA = hsv2rgb(float3(deepH, 0.85, 0.65));
+    float3 ringHueB = hsv2rgb(float3(warmH, 0.85, 0.95));
     float3 ringColor = mix(ringHueA, ringHueB, smoothstep(0.0, 1.0, ringAmp));
     ringColor += hsv2rgb(float3(fract(0.55 + ang * 0.159154943 + t * 0.05), 0.5, 1.0)) * 0.2;
 
-    // Ring crest: brightness peaks at ring boundaries
+    // Ring crest: brightness peaks at ring boundaries (sharpness user-controlled).
+    float sharp = max(0.3, p.cfg.w);
     float crest = 1.0 - abs(ringFract - 0.5) * 2.0;
-    crest = pow(crest, 1.5);
+    crest = pow(crest, sharp);
     crest *= ringAmp * (1.0 + u.rms * 0.6);
 
     // — Concentric vertical "displacement" — pseudo-3D crest height visualization
     // Y-axis perspective tilt
-    float perspective = 1.0 - p.y * 0.3;
+    float perspective = 1.0 - pt.y * 0.3;
     float displacement = crest * perspective * 0.3;
 
-    // — Body silhouette: rendered as deep void with golden silhouette outline
+    // — Body silhouette: rendered as deep void with user-controlled halo hue.
     float2 depthUV = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
     float depthMM = depthTex.sample(s, depthUV).r;
     bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
@@ -2505,12 +2578,14 @@ fragment float4 spectral_ocean_fs(
     col += float3(0.05, 0.10, 0.15) * exp(-r * 1.5) * (0.4 + u.rms * 0.6);
 
     if (inBody) {
-        col = mix(col, float3(0.95, 0.78, 0.26) * 0.6, 0.3);
+        float3 halo = hsv2rgb(float3(p.misc.z, 0.75, 1.0));
+        col = mix(col, halo * 0.6, 0.3);
     }
 
-    // Onset wave crash
+    // Onset wave crash (user-controlled).
+    float wave = max(0.0, p.misc.w);
     if (u.onset > 0.5) {
-        col += float3(0.4, 0.5, 0.6) * 0.40;
+        col += float3(0.4, 0.5, 0.6) * wave;
     }
 
     // ACES + vignette
@@ -2532,10 +2607,16 @@ fragment float4 spectral_ocean_fs(
 // create a person-shaped negative space. Inspiration: UVA's *Our Time*, Bruce
 // Munro's installations.
 
+struct ForestParams {
+    float4 cfg;   // (pillarSpacing, swayAmount, coreGlow, scatterAmount)
+    float4 misc;  // (baseHue, bandSaturation, onsetFlash, audioCoupling)
+};
+
 fragment float4 forest_of_light_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant ForestParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -2545,14 +2626,14 @@ fragment float4 forest_of_light_fs(
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    // — Pillar grid: each column has a pillar at its center
-    float pillarSpacing = 0.025 - bass * 0.008;
-    pillarSpacing = max(pillarSpacing, 0.012);
+    // — Pillar grid: each column has a pillar at its center (spacing user-controlled).
+    float pillarSpacing = max(0.005, p.cfg.x - bass * 0.008);
     float pillarHash = hash21(float2(floor(uv.x / pillarSpacing), 0));
 
-    // Pillar X-center at this UV
+    // Pillar X-center at this UV (sway user-controlled).
+    float swayAmt = p.cfg.y;
     float pillarCenterX = (floor(uv.x / pillarSpacing) + 0.5) * pillarSpacing;
-    pillarCenterX += sin(t * 0.6 + pillarHash * 13.0) * pillarSpacing * 0.10;  // wind sway
+    pillarCenterX += sin(t * 0.6 + pillarHash * 13.0) * pillarSpacing * 0.10 * swayAmt;
 
     // Distance to pillar axis (horizontal)
     float pillarDist = abs(uv.x - pillarCenterX) / (pillarSpacing * 0.5);
@@ -2577,31 +2658,36 @@ fragment float4 forest_of_light_fs(
     float pillarVis = step(pillarBottom, uv.y) * (1.0 - pillarDist);
     pillarVis = saturate(pillarVis);
 
-    // Pillar color: from FFT band at this column
+    // Pillar color: from FFT band at this column (audio coupling user-controlled).
     int bandIdx = int(uv.x * 8.0) % 8;
     float bandStrength = u.bands[bandIdx];
-    float hue = fract(0.55 + uv.x * 0.5 + bandStrength * 0.4 + t * 0.02);
-    float3 pillarColor = hsv2rgb(float3(hue, 0.65 + bandStrength * 0.20, 1.0));
+    float audioCouple = p.misc.w;
+    float hue = fract(p.misc.x + uv.x * 0.5 + bandStrength * 0.4 * audioCouple + t * 0.02);
+    float bandSat = clamp(p.misc.y * (0.65 + bandStrength * 0.20), 0.0, 1.0);
+    float3 pillarColor = hsv2rgb(float3(hue, bandSat, 1.0));
 
-    // Pillar core glow (vertical streak)
+    // Pillar core glow (user-scaled).
+    float coreScale = max(0.0, p.cfg.z);
     float core = 1.0 - smoothstep(0.0, 0.3, pillarDist);
     core = pow(core, 3.0);
 
-    // — Volumetric scatter: brightness fades with vertical position above pillar
+    // — Volumetric scatter (user-scaled).
+    float scatterScale = max(0.0, p.cfg.w);
     float scatterAmt = pow(saturate(1.0 - uv.y), 1.5);
 
     // Background
     float3 bg = mix(float3(0.005, 0.008, 0.020), float3(0.020, 0.012, 0.030), uv.y);
 
     float3 col = bg;
-    col += pillarColor * pillarVis * (0.6 + bandStrength * 1.5);
-    col += pillarColor * core * (1.5 + u.rms * 1.0);
+    col += pillarColor * pillarVis * (0.6 + bandStrength * 1.5 * audioCouple);
+    col += pillarColor * core * (1.5 + u.rms * 1.0) * coreScale;
 
     // Scatter haze
-    col += pillarColor * pillarVis * scatterAmt * 0.30;
+    col += pillarColor * pillarVis * scatterAmt * 0.30 * scatterScale;
 
-    // Onset: full row brightens
-    if (u.onset > 0.5) col += pillarColor * 0.30;
+    // Onset: full row brightens (user-controlled).
+    float flash = max(0.0, p.misc.z);
+    if (u.onset > 0.5) col += pillarColor * flash;
 
     // ACES tone
     col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
@@ -2622,11 +2708,17 @@ fragment float4 forest_of_light_fs(
 // uses a distinct shader subset — different palette, different effect blend.
 // Onset triggers pane rotation (mosaic re-shuffles).
 
+struct MemoryPalaceParams {
+    float4 cfg;   // (shuffleRate, gutterWidth, bandSpread, paneBleed)
+    float4 misc;  // (onsetFlash, hueOffset, saturation, vignette)
+};
+
 fragment float4 memory_palace_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
     texture2d<float, access::sample> colorTex [[texture(1)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant MemoryPalaceParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -2645,8 +2737,9 @@ fragment float4 memory_palace_fs(
     // Pane local UV (0..1 within each pane)
     float2 paneUV = fract(uv * 3.0);
 
-    // Pane assignment shuffles on onset
-    float onsetTime = floor(t * 0.5);
+    // Pane assignment shuffles on onset (rate user-controlled).
+    float shuffleRate = max(0.0, p.cfg.x);
+    float onsetTime = floor(t * 0.5 * shuffleRate);
     int shuffle = int(onsetTime) % 9;
     int actualPane = (paneIdx + shuffle) % 9;
 
@@ -2655,13 +2748,17 @@ fragment float4 memory_palace_fs(
     float depthMM = depthTex.sample(s, depthUV).r;
     bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
 
-    // Each pane has its own EQ slice (one of 8 bands)
+    // Each pane has its own EQ slice (one of 8 bands), with audio coupling user-controlled.
     int bandIdx = actualPane % 8;
-    float band = u.bands[bandIdx];
+    float bandRaw = u.bands[bandIdx];
+    float bandSpread = max(0.0, p.cfg.z);
+    float band = bandRaw * bandSpread;
 
-    // Each pane gets a distinct base color palette
+    // Each pane gets a distinct base color palette (hue offset + saturation user-controlled).
+    float hueOff = p.misc.y;
+    float sat = clamp(p.misc.z, 0.0, 1.0);
     float hueShift = float(actualPane) / 9.0;
-    float3 paneCol = hsv2rgb(float3(fract(hueShift + bass * 0.10 + t * 0.02), 0.7, 1.0));
+    float3 paneCol = hsv2rgb(float3(fract(hueShift + bass * 0.10 + t * 0.02 + hueOff), sat, 1.0));
 
     float3 col = float3(0);
 
@@ -2722,22 +2819,27 @@ fragment float4 memory_palace_fs(
         col = hsv2rgb(float3(fract(ang * 0.159154943 + t * 0.1), 0.85, 1.0)) * (0.5 + band * 1.5);
     }
 
-    // — Pane gutters (dim borders)
+    // — Pane gutters (dim borders, user-scaled width).
+    float gutterScale = max(0.1, p.cfg.y);
     float2 panePixel = paneUV;
     float gutter = min(min(panePixel.x, 1.0 - panePixel.x), min(panePixel.y, 1.0 - panePixel.y));
-    col *= smoothstep(0.0, 0.02, gutter);
+    col *= smoothstep(0.0, 0.02 * gutterScale, gutter);
 
-    // — Soft cross-pane bleed (subtle)
-    col *= 0.85 + 0.15 * smoothstep(0.04, 0.08, gutter);
+    // — Soft cross-pane bleed (subtle, user-scaled).
+    float bleedScale = clamp(p.cfg.w, 0.0, 2.0);
+    col *= mix(1.0, 0.85 + 0.15 * smoothstep(0.04, 0.08, gutter), bleedScale);
 
-    // Onset additive flash globally
-    col += float3(0.3, 0.3, 0.5) * u.onset * 0.30;
+    // Onset additive flash globally (user-controlled).
+    float flash = max(0.0, p.misc.x);
+    col += float3(0.3, 0.3, 0.5) * u.onset * flash;
 
     // ACES tone
     col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
     col = saturate(col);
 
-    col *= smoothstep(1.6, 0.3, length((uv - 0.5) * 1.4));
+    // Vignette (user-controlled tightness).
+    float vig = max(0.2, p.misc.w);
+    col *= smoothstep(1.6 / vig, 0.3 / vig, length((uv - 0.5) * 1.4));
     (void)mid; (void)treb;
 
     return float4(col, 1.0);
@@ -3203,18 +3305,24 @@ inline float3 chrome_env(float3 d, float t, float bass, float treb) {
     return base;
 }
 
+struct ChromeParams {
+    float4 cfg;   // (wobbleBase, bassEnvBoost, trebleEnvBoost, fresnelMix)
+    float4 misc;  // (onsetSpike, envHueShift, baseTone, _)
+};
+
 fragment float4 liquid_chrome_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant ChromeParams &p [[buffer(1)]]
 ) {
     float2 uv = in.uv;
     float2 p2 = (uv - 0.5) * 2.0;
     p2.x *= u.aspect;
     float t = u.time;
-    float bass = u.bands[0] + u.bands[1];
-    float treb = u.bands[6] + u.bands[7];
-    float wobble = 0.5 + u.rms * 1.5 + u.onset * 0.7;
+    float bass = (u.bands[0] + u.bands[1]) * max(0.0, p.cfg.y);
+    float treb = (u.bands[6] + u.bands[7]) * max(0.0, p.cfg.z);
+    float wobble = max(0.0, p.cfg.x) + u.rms * 1.5 + u.onset * 0.7;
 
     // Camera at +Z, looking toward -Z. Orthographic-ish for simplicity.
     float3 ro = float3(p2, 0.6);
@@ -3242,11 +3350,35 @@ fragment float4 liquid_chrome_fs(
     float3 r = reflect(rd, n);
     float fres = pow(1.0 - max(0.0, dot(-rd, n)), 5.0);
     float3 env = chrome_env(r, t, bass, treb);
-    float3 base = float3(0.10, 0.11, 0.13);
-    float3 col = mix(base, env, 0.65 + 0.35 * fres) * (1.0 + u.rms * 0.4);
+    // Hue-shift the environment by user-controlled angle (HSV cycle).
+    float envShift = p.misc.y;
+    if (envShift > 0.001 || envShift < -0.001) {
+        float3 envHSV;
+        float3 envRGB = env;
+        // Cheap RGB → HSV → RGB cycle:
+        float maxC = max(max(envRGB.r, envRGB.g), envRGB.b);
+        float minC = min(min(envRGB.r, envRGB.g), envRGB.b);
+        float d = maxC - minC;
+        float h = 0.0;
+        if (d > 1e-4) {
+            if (maxC == envRGB.r) h = (envRGB.g - envRGB.b) / d + (envRGB.g < envRGB.b ? 6.0 : 0.0);
+            else if (maxC == envRGB.g) h = (envRGB.b - envRGB.r) / d + 2.0;
+            else h = (envRGB.r - envRGB.g) / d + 4.0;
+            h /= 6.0;
+        }
+        float s = (maxC > 0.0) ? d / maxC : 0.0;
+        envHSV = float3(fract(h + envShift), s, maxC);
+        env = hsv2rgb(envHSV);
+    }
+    // baseTone shifts matte fallback color.
+    float bt = p.misc.z;
+    float3 base = hsv2rgb(float3(fract(0.62 + bt), 0.20, 0.12));
+    float fmix = clamp(p.cfg.w, 0.0, 1.0);
+    float3 col = mix(base, env, fmix + (1.0 - fmix) * fres) * (1.0 + u.rms * 0.4);
 
-    // Onset spike: brief specular flare aligned with view dir.
-    col += float3(1.0, 0.9, 0.7) * u.onset * pow(max(0.0, dot(n, -rd)), 16.0);
+    // Onset spike (user-controlled intensity).
+    float spike = max(0.0, p.misc.x);
+    col += float3(1.0, 0.9, 0.7) * u.onset * pow(max(0.0, dot(n, -rd)), 16.0) * spike;
 
     return float4(aces_tonemap(col), 1.0);
 }
@@ -3278,14 +3410,20 @@ inline float2 fold_disk(float2 p, int steps, float swirl) {
     return p;
 }
 
+struct TunnelParams {
+    float4 cfg;   // (swirlBase, bassSwirl, tileSharpness, radialFreq)
+    float4 misc;  // (foldDepth, onsetGlow, vignetteScale, hueOffset)
+};
+
 fragment float4 hyperbolic_tunnel_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant TunnelParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     float2 uv = in.uv;
-    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 1.6;
+    float2 pt = (uv - 0.5) * float2(u.aspect, 1.0) * 1.6;
     float t = u.time;
     float bass = u.bands[0] + u.bands[1];
 
@@ -3295,17 +3433,21 @@ fragment float4 hyperbolic_tunnel_fs(
     float depthMM = depthTex.sample(s, depthUV).r;
     bool inBody = depthMM > u.nearMM && depthMM < u.farMM && depthMM > 0;
 
-    float swirl = 0.10 + bass * 0.30 + sin(t * 0.27) * 0.06;
-    float2 q = fold_disk(p, 6, swirl);
+    float swirl = p.cfg.x + bass * p.cfg.y + sin(t * 0.27) * 0.06;
+    int foldDepth = int(clamp(p.misc.x, 1.0, 12.0));
+    float2 q = fold_disk(pt, foldDepth, swirl);
 
-    // Build a "tile" from distance to fold seams.
+    // Build a "tile" from distance to fold seams. tileSharpness/radialFreq user-controlled.
+    float sharp = max(0.5, p.cfg.z);
+    float radialFreq = max(1.0, p.cfg.w);
     float seam = abs(0.5 - fract(length(q) * 4.0));
-    float radial = abs(sin(atan2(q.y, q.x) * 7.0 + t * 0.6));
-    float tile = pow(saturate(1.0 - seam * 6.0), 2.5);
+    float radial = abs(sin(atan2(q.y, q.x) * radialFreq + t * 0.6));
+    float tile = pow(saturate(1.0 - seam * sharp), 2.5);
     tile += pow(radial, 8.0) * 0.5;
 
-    // Iridescent glass palette.
-    float3 col = iq_palette(t * 0.05 + length(q) * 0.7,
+    // Iridescent glass palette with hue offset.
+    float hueShift = p.misc.w;
+    float3 col = iq_palette(t * 0.05 + length(q) * 0.7 + hueShift,
                             float3(0.5, 0.5, 0.5),
                             float3(0.5, 0.5, 0.5),
                             float3(2.0, 1.0, 0.0),
@@ -3313,8 +3455,9 @@ fragment float4 hyperbolic_tunnel_fs(
     col *= 0.4 + 1.6 * tile;
 
     if (inBody) col *= 1.4;
-    col += float3(0.4, 0.6, 1.0) * u.onset * 0.5;
-    col *= smoothstep(2.0, 0.8, length(p));
+    col += float3(0.4, 0.6, 1.0) * u.onset * p.misc.y;
+    float vignette = max(0.2, p.misc.z);
+    col *= smoothstep(2.0 / vignette, 0.8 / vignette, length(pt));
     return float4(aces_tonemap(col), 1.0);
 }
 
@@ -3353,6 +3496,8 @@ struct MIFUniforms {
     float4 ctrl;       // (time, count, polarity, _)
     float4 audio;      // (rms, onset, bassLow, treb)
     float4 bandsLow;
+    float4 cfg;        // (lineLength, fieldStrength, baseHue, audioCoupling)
+    float4 misc;       // (bassHueShift, onsetBoost, saturation, _)
 };
 
 struct MIFFiling {
@@ -3430,8 +3575,9 @@ kernel void mif_step_kernel(
     float t = u.ctrl.x;
 
     float2 f = mif_field_at(p, t, u.audio.z, u.ctrl.z, depthTex, range.x, range.y);
-    // Filings drift along the field with a small step and align to it.
-    p += f * 0.6;
+    // Filings drift along the field; user-controlled fieldStrength scales step.
+    float strength = max(0.0, u.cfg.y);
+    p += f * 0.6 * strength;
     float angle = atan2(f.y, f.x);
 
     // Recycle filings that drifted off-screen.
@@ -3459,14 +3605,22 @@ vertex MIFOut mif_vs(
     float2 p = f.posAngle.xy;
     float a = f.posAngle.z;
     // Filings are short stretched lines aligned with the local field.
-    float len = 0.012 * (1.0 + u.audio.x * 1.4);
+    // lineLength + audioCoupling user-controlled.
+    float lengthScale = max(0.0, u.cfg.x);
+    float audioCouple = u.cfg.w;
+    float len = 0.012 * lengthScale * (1.0 + u.audio.x * 1.4 * audioCouple);
     float2 d = float2(cos(a), sin(a)) * (end == 0 ? -len : len);
     MIFOut o;
     o.position = float4(p + d, 0, 1);
-    // Warm/cool palette by angle, brightened by RMS.
-    float h = fract(0.55 + a / 6.28318 + u.audio.z * 0.2);
-    float3 col = hsv2rgb(float3(h, 0.7, 1.0));
-    o.color = float4(col * (0.5 + u.audio.x * 1.2), 1.0);
+    // Hue palette: baseHue user-controlled, bass hue-shift user-controlled,
+    // saturation + onset-boost user-controlled.
+    float baseHue = u.cfg.z;
+    float bassHueShift = u.misc.x;
+    float h = fract(baseHue + a / 6.28318 + u.audio.z * bassHueShift);
+    float saturation = clamp(u.misc.z, 0.0, 1.0);
+    float3 col = hsv2rgb(float3(h, saturation, 1.0));
+    float onsetBoost = u.misc.y;
+    o.color = float4(col * (0.5 + u.audio.x * 1.2 * audioCouple + u.audio.y * 0.4 * onsetBoost), 1.0);
     return o;
 }
 
@@ -3992,6 +4146,7 @@ struct BMUniforms {
     float4 ctrl;     // (time, count, dt, _)
     float4 audio;    // (rms, onset, bassLow, treb)
     float4 weights;  // (separation, alignment, cohesion, predator)
+    float4 cfg;      // (birdSize, flapRate, _, _)
 };
 
 struct BMBird {
@@ -4108,9 +4263,11 @@ vertex BMOut bm_bird_vs(
     float2 fwd = v / speed;
     float2 sideV = float2(-fwd.y, fwd.x);
 
-    // Two-triangle wing quad: pointed forward, ~12 px long.
-    float lenL = 0.012 + speed * 1.2;
-    float widT = 0.005;
+    // Two-triangle wing quad: pointed forward, scaled by user-controlled birdSize.
+    float sizeScale = max(0.2, u.cfg.x);
+    float flap = max(0.1, u.cfg.y);
+    float lenL = (0.012 + speed * 1.2) * sizeScale;
+    float widT = 0.005 * sizeScale * (0.7 + 0.3 * sin(u.ctrl.x * 12.0 * flap + float(iid) * 0.13));
     float2 quad[4] = {
         b.posSpeed.xy - fwd * lenL * 0.4 - sideV * widT,
         b.posSpeed.xy - fwd * lenL * 0.4 + sideV * widT,
@@ -4308,16 +4465,23 @@ inline float petal_shape(float2 p, float t) {
     return falloff;
 }
 
+struct VelvetPetalParams {
+    float4 cfg;   // (ringCount, divisions, bassBloom, baseHue)
+    float4 misc;  // (saturation, petalScale, stemSway, onsetGlow)
+};
+
 fragment float4 velvet_petal_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant VelvetPetalParams &pp [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     float2 uv = in.uv;
-    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * 6.0;
+    float petalScale = max(0.3, pp.misc.y);
+    float2 p = (uv - 0.5) * float2(u.aspect, 1.0) * (6.0 / petalScale);
     float t = u.time;
-    float bass = u.bands[0] + u.bands[1];
+    float bass = (u.bands[0] + u.bands[1]) * max(0.0, pp.cfg.z);
     float treb = u.bands[6] + u.bands[7];
 
     // Body presence: petals bloom denser inside the silhouette.
@@ -4327,34 +4491,35 @@ fragment float4 velvet_petal_fs(
 
     float3 col = float3(0.06, 0.04, 0.08);  // deep velvet plum bg
 
-    // Iterate over a coarse jittered grid of petal centres.
-    int rings = 4;
-    int divisions = 14;
-    for (int ringI = 0; ringI < rings; ringI++) {
+    // Iterate over a coarse jittered grid of petal centres (counts user-controlled).
+    int rings = int(clamp(pp.cfg.x, 1.0, 8.0));
+    int divisions = int(clamp(pp.cfg.y, 4.0, 30.0));
+    float swayAmt = pp.misc.z;
+    float saturationScale = pp.misc.x;
+    float baseHueOff = pp.cfg.w;
+    for (int ringI = 0; ringI < 8; ringI++) {
+        if (ringI >= rings) break;
         float ringR = 0.5 + float(ringI) * 0.6 + bass * 0.2;
-        for (int j = 0; j < divisions; j++) {
+        for (int j = 0; j < 30; j++) {
+            if (j >= divisions) break;
             float baseA = (float(j) + 0.5) / float(divisions) * 6.28318;
-            // Phase wobble per petal so the field breathes.
             float wobbleA = sin(t * 0.6 + float(ringI + j) * 1.7) * 0.05;
             float a = baseA + wobbleA + t * 0.04 * (1.0 + float(ringI) * 0.2);
             float2 c = ringR * float2(cos(a), sin(a));
-            // Stem sway with audio.
-            c += float2(sin(t * 1.3 + ringR + float(j)) * 0.05 * (1.0 + bass),
-                        cos(t * 1.1 + ringR + float(j)) * 0.05 * (1.0 + bass));
+            // Stem sway with audio (user-controlled).
+            c += float2(sin(t * 1.3 + ringR + float(j)) * 0.05 * (1.0 + bass) * swayAmt,
+                        cos(t * 1.1 + ringR + float(j)) * 0.05 * (1.0 + bass) * swayAmt);
             float2 toP = p - c;
-            // Rotate the petal so it points outward from origin.
             float orient = a + 1.5707963;
             float ca = cos(-orient), sa = sin(-orient);
             float2 q = float2(ca * toP.x - sa * toP.y, sa * toP.x + ca * toP.y);
-            // Stretch tall.
             q.y *= 0.6;
             float petal = petal_shape(q, t);
             if (petal < 0.001) continue;
 
-            // Hue from ring + petal seed; saturated jewel velvets.
-            float hue = fract(0.85 + float(ringI) * 0.07 + sin(float(j) * 1.7) * 0.05);
-            float3 base = hsv2rgb(float3(hue, 0.85, 1.0));
-            // Velvet sheen: Disney sheen approximation.
+            float hue = fract(baseHueOff + float(ringI) * 0.07 + sin(float(j) * 1.7) * 0.05);
+            float petalSat = clamp(saturationScale * 0.85, 0.0, 1.0);
+            float3 base = hsv2rgb(float3(hue, petalSat, 1.0));
             float fres = pow(saturate(1.0 - length(q) * 1.4), 5.0);
             float3 sheen = mix(base, float3(1.0, 0.85, 0.95), fres) * (0.4 + treb * 0.7);
 
@@ -4364,7 +4529,7 @@ fragment float4 velvet_petal_fs(
         }
     }
 
-    col += float3(0.6, 0.4, 0.7) * u.onset * 0.3;
+    col += float3(0.6, 0.4, 0.7) * u.onset * 0.3 * max(0.0, pp.misc.w);
     col *= smoothstep(2.5, 0.6, length((uv - 0.5) * 1.6));
     return float4(aces_tonemap(col), 1.0);
 }

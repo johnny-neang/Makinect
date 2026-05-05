@@ -133,6 +133,18 @@ final class KinectManager {
     let kineticWireframe = KineticWireframeConfig()
     let bodyPaint = BodyPaintConfig()
     let cathedralOfBones = CathedralOfBonesConfig()
+    let hyperbolicTunnel = HyperbolicTunnelConfig()
+    let iridescentPlumage = IridescentPlumageConfig()
+    let origamiBody = OrigamiBodyConfig()
+    let stainedCathedral = StainedCathedralConfig()
+    let glassOcean = GlassOceanConfig()
+    let forestOfLight = ForestOfLightConfig()
+    let spectralOcean = SpectralOceanConfig()
+    let liquidChromeBody = LiquidChromeBodyConfig()
+    let velvetPetalField = VelvetPetalFieldConfig()
+    let magneticIronFilings = MagneticIronFilingsConfig()
+    let boidsMurmuration = BoidsMurmurationConfig()
+    let memoryPalace = MemoryPalaceConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

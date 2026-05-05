@@ -28,6 +28,7 @@ final class BoidsMurmurationVisualizer: Visualizer {
         var ctrl: SIMD4<Float>     // (time, count, dt, _)
         var audio: SIMD4<Float>    // (rms, onset, bassLow, treb)
         var weights: SIMD4<Float>  // (separation, alignment, cohesion, predator)
+        var cfg: SIMD4<Float>      // (birdSize, flapRate, _, _)
     }
 
     private let initPSO: MTLComputePipelineState
@@ -69,6 +70,7 @@ final class BoidsMurmurationVisualizer: Visualizer {
 
     func draw(in view: MTKView, encoder: MTLRenderCommandEncoder, inputs: VisualizerInputs) {
         let bands = inputs.audio.bands
+        let cfg = inputs.boidsMurmuration
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
 
@@ -76,11 +78,12 @@ final class BoidsMurmurationVisualizer: Visualizer {
             ctrl: SIMD4<Float>(inputs.timeSeconds, Float(Self.birdCount), 1.0 / 60.0, 0),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
             weights: SIMD4<Float>(
-                0.05 + bassLow * 0.04,    // separation
-                0.04,                      // alignment
-                0.012 + treb * 0.02,       // cohesion
-                inputs.audio.onset ? 0.30 : 0.10  // predator strength
-            )
+                cfg.separation + bassLow * cfg.bassSeparationBoost,
+                cfg.alignment,
+                cfg.cohesion + treb * cfg.trebleCohesionBoost,
+                cfg.predator + (inputs.audio.onset ? cfg.onsetPredatorBoost : 0)
+            ),
+            cfg: SIMD4<Float>(cfg.birdSize, cfg.flapRate, 0, 0)
         )
         var range = SIMD2<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM)
 

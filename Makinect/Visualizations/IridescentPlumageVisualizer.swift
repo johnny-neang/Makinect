@@ -9,6 +9,15 @@ import MetalKit
 
 @MainActor
 final class IridescentPlumageVisualizer: Visualizer {
+    private struct Params {
+        /// (featherSize, bassGravityComb, trebleRuffle, hueOffset)
+        var cfg: SIMD4<Float>
+        /// (highlightHueOffset, gustStrength, subSurface, audioGlow)
+        var misc: SIMD4<Float>
+        /// (saturation, _, _, _)
+        var misc2: SIMD4<Float>
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -34,9 +43,17 @@ final class IridescentPlumageVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.iridescentPlumage
+        var params = Params(
+            cfg: SIMD4<Float>(cfg.featherSize, cfg.bassGravityComb, cfg.trebleRuffle, cfg.hueOffset),
+            misc: SIMD4<Float>(cfg.highlightHueOffset, cfg.gustStrength, cfg.subSurface, cfg.audioGlow),
+            misc2: SIMD4<Float>(cfg.saturation, 0, 0, 0)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

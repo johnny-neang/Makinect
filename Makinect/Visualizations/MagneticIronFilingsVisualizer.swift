@@ -28,6 +28,8 @@ final class MagneticIronFilingsVisualizer: Visualizer {
         var ctrl: SIMD4<Float>       // (time, count, polarity, _)
         var audio: SIMD4<Float>      // (rms, onset, bassLow, treb)
         var bandsLow: SIMD4<Float>
+        var cfg: SIMD4<Float>        // (lineLength, fieldStrength, baseHue, audioCoupling)
+        var misc: SIMD4<Float>       // (bassHueShift, onsetBoost, saturation, _)
     }
 
     private let initPSO: MTLComputePipelineState
@@ -71,7 +73,8 @@ final class MagneticIronFilingsVisualizer: Visualizer {
 
     func draw(in view: MTKView, encoder: MTLRenderCommandEncoder, inputs: VisualizerInputs) {
         let bands = inputs.audio.bands
-        if inputs.audio.onset && lastOnset < 0.5 { polarity = -polarity }
+        let cfg = inputs.magneticIronFilings
+        if cfg.onsetPolarityFlip && inputs.audio.onset && lastOnset < 0.5 { polarity = -polarity }
         lastOnset = inputs.audio.onset ? 1 : 0
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
@@ -84,7 +87,9 @@ final class MagneticIronFilingsVisualizer: Visualizer {
                 bands.indices.contains(1) ? bands[1] : 0,
                 bands.indices.contains(2) ? bands[2] : 0,
                 bands.indices.contains(3) ? bands[3] : 0
-            )
+            ),
+            cfg: SIMD4<Float>(cfg.lineLength, cfg.fieldStrength, cfg.baseHue, cfg.audioCoupling),
+            misc: SIMD4<Float>(cfg.bassHueShift, cfg.onsetBoost, cfg.saturation, 0)
         )
         var range = SIMD2<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM)
 

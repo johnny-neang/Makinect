@@ -8,6 +8,13 @@ import MetalKit
 
 @MainActor
 final class SpectralOceanVisualizer: Visualizer {
+    private struct Params {
+        /// (ringSpeed, bassRingSpeed, ringDensity, crestSharpness)
+        var cfg: SIMD4<Float>
+        /// (deepHue, warmHue, bodyHaloHue, onsetWave)
+        var misc: SIMD4<Float>
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -33,9 +40,16 @@ final class SpectralOceanVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.spectralOcean
+        var params = Params(
+            cfg: SIMD4<Float>(cfg.ringSpeed, cfg.bassRingSpeed, cfg.ringDensity, cfg.crestSharpness),
+            misc: SIMD4<Float>(cfg.deepHue, cfg.warmHue, cfg.bodyHaloHue, cfg.onsetWave)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

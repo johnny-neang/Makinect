@@ -11,6 +11,13 @@ import MetalKit
 
 @MainActor
 final class MemoryPalaceVisualizer: Visualizer {
+    private struct Params {
+        /// (shuffleRate, gutterWidth, bandSpread, paneBleed)
+        var cfg: SIMD4<Float>
+        /// (onsetFlash, hueOffset, saturation, vignette)
+        var misc: SIMD4<Float>
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -36,10 +43,17 @@ final class MemoryPalaceVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.memoryPalace
+        var params = Params(
+            cfg: SIMD4<Float>(cfg.shuffleRate, cfg.gutterWidth, cfg.bandSpread, cfg.paneBleed),
+            misc: SIMD4<Float>(cfg.onsetFlash, cfg.hueOffset, cfg.saturation, cfg.vignette)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentTexture(inputs.textures.colorTexture, index: 1)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

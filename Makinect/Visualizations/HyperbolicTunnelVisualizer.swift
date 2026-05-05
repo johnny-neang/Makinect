@@ -8,6 +8,13 @@ import MetalKit
 
 @MainActor
 final class HyperbolicTunnelVisualizer: Visualizer {
+    private struct Params {
+        /// (swirlBase, bassSwirl, tileSharpness, radialFreq)
+        var cfg: SIMD4<Float>
+        /// (foldDepth, onsetGlow, vignetteScale, hueOffset)
+        var misc: SIMD4<Float>
+    }
+
     private let pipeline: MTLRenderPipelineState
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
         let desc = MTLRenderPipelineDescriptor()
@@ -25,9 +32,17 @@ final class HyperbolicTunnelVisualizer: Visualizer {
         u.nearMM = inputs.segmentationNearMM; u.farMM = inputs.segmentationFarMM
         let b = inputs.audio.bands
         if b.count >= 8 { u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]) }
+
+        let cfg = inputs.hyperbolicTunnel
+        var params = Params(
+            cfg: SIMD4<Float>(cfg.swirlBase, cfg.bassSwirl, cfg.tileSharpness, cfg.radialFreq),
+            misc: SIMD4<Float>(Float(cfg.foldDepth), cfg.onsetGlow, cfg.vignetteScale, cfg.hueOffset)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

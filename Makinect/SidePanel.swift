@@ -293,6 +293,369 @@ struct SidePanel: View {
         if manager.visualization == .cathedralOfBones {
             cathedralOfBonesSection
         }
+        if manager.visualization == .hyperbolicTunnel {
+            hyperbolicTunnelSection
+        }
+        if manager.visualization == .iridescentPlumage {
+            iridescentPlumageSection
+        }
+        if manager.visualization == .origamiBody {
+            origamiBodySection
+        }
+        if manager.visualization == .stainedCathedral {
+            stainedCathedralSection
+        }
+        if manager.visualization == .glassOcean {
+            glassOceanSection
+        }
+        if manager.visualization == .forestOfLight {
+            forestOfLightSection
+        }
+        if manager.visualization == .spectralOcean {
+            spectralOceanSection
+        }
+        if manager.visualization == .liquidChromeBody {
+            liquidChromeBodySection
+        }
+        if manager.visualization == .velvetPetalField {
+            velvetPetalFieldSection
+        }
+        if manager.visualization == .magneticIronFilings {
+            magneticIronFilingsSection
+        }
+        if manager.visualization == .boidsMurmuration {
+            boidsMurmurationSection
+        }
+        if manager.visualization == .memoryPalace {
+            memoryPalaceSection
+        }
+    }
+
+    @ViewBuilder
+    private var magneticIronFilingsSection: some View {
+        let cfg = manager.magneticIronFilings
+        GroupBox("Magnetic Iron Filings") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Line Length", value: String(format: "%.2f", cfg.lineLength)).font(.caption)
+                Slider(value: Bindable(cfg).lineLength, in: 0.3...3)
+                LabeledContent("Field Strength", value: String(format: "%.2f", cfg.fieldStrength)).font(.caption)
+                Slider(value: Bindable(cfg).fieldStrength, in: 0...3)
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue)).font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling)).font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+                LabeledContent("Bass Hue", value: String(format: "%.2f", cfg.bassHueShift)).font(.caption)
+                Slider(value: Bindable(cfg).bassHueShift, in: 0...1)
+                Toggle(isOn: Bindable(cfg).onsetPolarityFlip) {
+                    Text("Onset Flip Polarity").font(.caption)
+                }
+                LabeledContent("Onset Boost", value: String(format: "%.2f", cfg.onsetBoost)).font(.caption)
+                Slider(value: Bindable(cfg).onsetBoost, in: 0...3)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var boidsMurmurationSection: some View {
+        let cfg = manager.boidsMurmuration
+        GroupBox("Boids Murmuration") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Separation", value: String(format: "%.3f", cfg.separation)).font(.caption)
+                Slider(value: Bindable(cfg).separation, in: 0...0.20)
+                LabeledContent("Alignment", value: String(format: "%.3f", cfg.alignment)).font(.caption)
+                Slider(value: Bindable(cfg).alignment, in: 0...0.20)
+                LabeledContent("Cohesion", value: String(format: "%.3f", cfg.cohesion)).font(.caption)
+                Slider(value: Bindable(cfg).cohesion, in: 0...0.10)
+                LabeledContent("Predator", value: String(format: "%.3f", cfg.predator)).font(.caption)
+                Slider(value: Bindable(cfg).predator, in: 0...0.50)
+                LabeledContent("Bass Sep", value: String(format: "%.3f", cfg.bassSeparationBoost)).font(.caption)
+                Slider(value: Bindable(cfg).bassSeparationBoost, in: 0...0.20)
+                LabeledContent("Treble Coh", value: String(format: "%.3f", cfg.trebleCohesionBoost)).font(.caption)
+                Slider(value: Bindable(cfg).trebleCohesionBoost, in: 0...0.10)
+                LabeledContent("Onset Pred", value: String(format: "%.3f", cfg.onsetPredatorBoost)).font(.caption)
+                Slider(value: Bindable(cfg).onsetPredatorBoost, in: 0...1)
+                LabeledContent("Bird Size", value: String(format: "%.2f", cfg.birdSize)).font(.caption)
+                Slider(value: Bindable(cfg).birdSize, in: 0.3...3)
+                LabeledContent("Flap Rate", value: String(format: "%.2f", cfg.flapRate)).font(.caption)
+                Slider(value: Bindable(cfg).flapRate, in: 0.1...3)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var memoryPalaceSection: some View {
+        let cfg = manager.memoryPalace
+        GroupBox("Memory Palace") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Shuffle Rate", value: String(format: "%.2f", cfg.shuffleRate)).font(.caption)
+                Slider(value: Bindable(cfg).shuffleRate, in: 0...3)
+                LabeledContent("Gutter Width", value: String(format: "%.2f", cfg.gutterWidth)).font(.caption)
+                Slider(value: Bindable(cfg).gutterWidth, in: 0.1...4)
+                LabeledContent("Band Spread", value: String(format: "%.2f", cfg.bandSpread)).font(.caption)
+                Slider(value: Bindable(cfg).bandSpread, in: 0...2)
+                LabeledContent("Pane Bleed", value: String(format: "%.2f", cfg.paneBleed)).font(.caption)
+                Slider(value: Bindable(cfg).paneBleed, in: 0...2)
+                LabeledContent("Onset Flash", value: String(format: "%.2f", cfg.onsetFlash)).font(.caption)
+                Slider(value: Bindable(cfg).onsetFlash, in: 0...2)
+                LabeledContent("Hue Offset", value: String(format: "%+.2f", cfg.hueOffset)).font(.caption)
+                Slider(value: Bindable(cfg).hueOffset, in: -1...1)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+                LabeledContent("Vignette", value: String(format: "%.2f", cfg.vignette)).font(.caption)
+                Slider(value: Bindable(cfg).vignette, in: 0.5...3)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var spectralOceanSection: some View {
+        let cfg = manager.spectralOcean
+        GroupBox("Spectral Ocean") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Ring Speed", value: String(format: "%.2f", cfg.ringSpeed)).font(.caption)
+                Slider(value: Bindable(cfg).ringSpeed, in: 0...3)
+                LabeledContent("Bass Speed", value: String(format: "%.2f", cfg.bassRingSpeed)).font(.caption)
+                Slider(value: Bindable(cfg).bassRingSpeed, in: 0...3)
+                LabeledContent("Density", value: String(format: "%.0f", cfg.ringDensity)).font(.caption)
+                Slider(value: Bindable(cfg).ringDensity, in: 10...60)
+                LabeledContent("Sharpness", value: String(format: "%.2f", cfg.crestSharpness)).font(.caption)
+                Slider(value: Bindable(cfg).crestSharpness, in: 0.3...4)
+                LabeledContent("Deep Hue", value: String(format: "%.2f", cfg.deepHue)).font(.caption)
+                Slider(value: Bindable(cfg).deepHue, in: 0...1)
+                LabeledContent("Warm Hue", value: String(format: "%.2f", cfg.warmHue)).font(.caption)
+                Slider(value: Bindable(cfg).warmHue, in: 0...1)
+                LabeledContent("Halo Hue", value: String(format: "%.2f", cfg.bodyHaloHue)).font(.caption)
+                Slider(value: Bindable(cfg).bodyHaloHue, in: 0...1)
+                LabeledContent("Onset Wave", value: String(format: "%.2f", cfg.onsetWave)).font(.caption)
+                Slider(value: Bindable(cfg).onsetWave, in: 0...2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var liquidChromeBodySection: some View {
+        let cfg = manager.liquidChromeBody
+        GroupBox("Liquid Chrome") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Wobble", value: String(format: "%.2f", cfg.wobbleBase)).font(.caption)
+                Slider(value: Bindable(cfg).wobbleBase, in: 0...2)
+                LabeledContent("Bass Env", value: String(format: "%.2f", cfg.bassEnvBoost)).font(.caption)
+                Slider(value: Bindable(cfg).bassEnvBoost, in: 0...3)
+                LabeledContent("Treble Env", value: String(format: "%.2f", cfg.trebleEnvBoost)).font(.caption)
+                Slider(value: Bindable(cfg).trebleEnvBoost, in: 0...3)
+                LabeledContent("Fresnel", value: String(format: "%.2f", cfg.fresnelMix)).font(.caption)
+                Slider(value: Bindable(cfg).fresnelMix, in: 0...1)
+                LabeledContent("Onset Spike", value: String(format: "%.2f", cfg.onsetSpike)).font(.caption)
+                Slider(value: Bindable(cfg).onsetSpike, in: 0...3)
+                LabeledContent("Env Hue Shift", value: String(format: "%+.2f", cfg.envHueShift)).font(.caption)
+                Slider(value: Bindable(cfg).envHueShift, in: -1...1)
+                LabeledContent("Base Tone", value: String(format: "%+.2f", cfg.baseTone)).font(.caption)
+                Slider(value: Bindable(cfg).baseTone, in: -0.5...0.5)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var velvetPetalFieldSection: some View {
+        let cfg = manager.velvetPetalField
+        GroupBox("Velvet Petal Field") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Rings", value: "\(cfg.ringCount)").font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.ringCount) },
+                                   set: { cfg.ringCount = Int($0) }),
+                    in: 1...8, step: 1
+                )
+                LabeledContent("Divisions", value: "\(cfg.divisions)").font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.divisions) },
+                                   set: { cfg.divisions = Int($0) }),
+                    in: 4...30, step: 1
+                )
+                LabeledContent("Bass Bloom", value: String(format: "%.2f", cfg.bassBloom)).font(.caption)
+                Slider(value: Bindable(cfg).bassBloom, in: 0...3)
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue)).font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1.5)
+                LabeledContent("Petal Scale", value: String(format: "%.2f", cfg.petalScale)).font(.caption)
+                Slider(value: Bindable(cfg).petalScale, in: 0.5...2)
+                LabeledContent("Stem Sway", value: String(format: "%.2f", cfg.stemSway)).font(.caption)
+                Slider(value: Bindable(cfg).stemSway, in: 0...3)
+                LabeledContent("Onset Glow", value: String(format: "%.2f", cfg.onsetGlow)).font(.caption)
+                Slider(value: Bindable(cfg).onsetGlow, in: 0...3)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stainedCathedralSection: some View {
+        let cfg = manager.stainedCathedral
+        GroupBox("Stained Cathedral") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Sectors", value: "\(cfg.sectorCount)").font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.sectorCount) },
+                                   set: { cfg.sectorCount = Int($0) }),
+                    in: 4...24, step: 1
+                )
+                LabeledContent("Rings", value: "\(cfg.ringCount)").font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.ringCount) },
+                                   set: { cfg.ringCount = Int($0) }),
+                    in: 3...16, step: 1
+                )
+                LabeledContent("Tracery W", value: String(format: "%.2f", cfg.traceryWidth)).font(.caption)
+                Slider(value: Bindable(cfg).traceryWidth, in: 0.3...3)
+                LabeledContent("Inner Glow", value: String(format: "%.2f", cfg.innerGlow)).font(.caption)
+                Slider(value: Bindable(cfg).innerGlow, in: 0...3)
+                LabeledContent("God Rays", value: String(format: "%.2f", cfg.godRayStrength)).font(.caption)
+                Slider(value: Bindable(cfg).godRayStrength, in: 0...2)
+                LabeledContent("Dust", value: String(format: "%.2f", cfg.dustIntensity)).font(.caption)
+                Slider(value: Bindable(cfg).dustIntensity, in: 0...1)
+                LabeledContent("Onset Flash", value: String(format: "%.2f", cfg.onsetFlash)).font(.caption)
+                Slider(value: Bindable(cfg).onsetFlash, in: 0...2)
+                LabeledContent("Halo Hue", value: String(format: "%.2f", cfg.bodyHaloHue)).font(.caption)
+                Slider(value: Bindable(cfg).bodyHaloHue, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var glassOceanSection: some View {
+        let cfg = manager.glassOcean
+        GroupBox("Glass Ocean") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Refraction", value: String(format: "%.2f", cfg.refractionStrength)).font(.caption)
+                Slider(value: Bindable(cfg).refractionStrength, in: 0...3)
+                LabeledContent("Caustics", value: String(format: "%.2f", cfg.causticsIntensity)).font(.caption)
+                Slider(value: Bindable(cfg).causticsIntensity, in: 0...3)
+                LabeledContent("Coral Hue", value: String(format: "%.2f", cfg.coralHue)).font(.caption)
+                Slider(value: Bindable(cfg).coralHue, in: 0...1)
+                LabeledContent("Jellies", value: "\(cfg.jellyCount)").font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.jellyCount) },
+                                   set: { cfg.jellyCount = Int($0) }),
+                    in: 0...16, step: 1
+                )
+                LabeledContent("Jelly Size", value: String(format: "%.3f", cfg.jellySize)).font(.caption)
+                Slider(value: Bindable(cfg).jellySize, in: 0.01...0.10)
+                LabeledContent("Rim", value: String(format: "%.2f", cfg.rimStrength)).font(.caption)
+                Slider(value: Bindable(cfg).rimStrength, in: 0...3)
+                LabeledContent("Aberration", value: String(format: "%.2f", cfg.aberration)).font(.caption)
+                Slider(value: Bindable(cfg).aberration, in: 0...3)
+                LabeledContent("Onset Ripple", value: String(format: "%.2f", cfg.onsetRipple)).font(.caption)
+                Slider(value: Bindable(cfg).onsetRipple, in: 0...2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var forestOfLightSection: some View {
+        let cfg = manager.forestOfLight
+        GroupBox("Forest of Light") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Spacing", value: String(format: "%.4f", cfg.pillarSpacing)).font(.caption)
+                Slider(value: Bindable(cfg).pillarSpacing, in: 0.010...0.060)
+                LabeledContent("Sway", value: String(format: "%.2f", cfg.swayAmount)).font(.caption)
+                Slider(value: Bindable(cfg).swayAmount, in: 0...3)
+                LabeledContent("Core Glow", value: String(format: "%.2f", cfg.coreGlow)).font(.caption)
+                Slider(value: Bindable(cfg).coreGlow, in: 0...3)
+                LabeledContent("Scatter", value: String(format: "%.2f", cfg.scatterAmount)).font(.caption)
+                Slider(value: Bindable(cfg).scatterAmount, in: 0...3)
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue)).font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.bandSaturation)).font(.caption)
+                Slider(value: Bindable(cfg).bandSaturation, in: 0...2)
+                LabeledContent("Onset Flash", value: String(format: "%.2f", cfg.onsetFlash)).font(.caption)
+                Slider(value: Bindable(cfg).onsetFlash, in: 0...2)
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling)).font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var hyperbolicTunnelSection: some View {
+        let cfg = manager.hyperbolicTunnel
+        GroupBox("Hyperbolic Tunnel") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Swirl Base", value: String(format: "%.2f", cfg.swirlBase)).font(.caption)
+                Slider(value: Bindable(cfg).swirlBase, in: 0...0.5)
+                LabeledContent("Bass Swirl", value: String(format: "%.2f", cfg.bassSwirl)).font(.caption)
+                Slider(value: Bindable(cfg).bassSwirl, in: 0...1)
+                LabeledContent("Fold Depth", value: "\(cfg.foldDepth)").font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.foldDepth) },
+                                   set: { cfg.foldDepth = Int($0) }),
+                    in: 1...12, step: 1
+                )
+                LabeledContent("Tile Sharpness", value: String(format: "%.1f", cfg.tileSharpness)).font(.caption)
+                Slider(value: Bindable(cfg).tileSharpness, in: 1...12)
+                LabeledContent("Radial Freq", value: String(format: "%.1f", cfg.radialFreq)).font(.caption)
+                Slider(value: Bindable(cfg).radialFreq, in: 2...14)
+                LabeledContent("Onset Glow", value: String(format: "%.2f", cfg.onsetGlow)).font(.caption)
+                Slider(value: Bindable(cfg).onsetGlow, in: 0...2)
+                LabeledContent("Vignette", value: String(format: "%.2f", cfg.vignetteScale)).font(.caption)
+                Slider(value: Bindable(cfg).vignetteScale, in: 0.5...2)
+                LabeledContent("Hue Offset", value: String(format: "%+.2f", cfg.hueOffset)).font(.caption)
+                Slider(value: Bindable(cfg).hueOffset, in: -1...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var iridescentPlumageSection: some View {
+        let cfg = manager.iridescentPlumage
+        GroupBox("Iridescent Plumage") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Feather Size", value: String(format: "%.4f", cfg.featherSize)).font(.caption)
+                Slider(value: Bindable(cfg).featherSize, in: 0.005...0.05)
+                LabeledContent("Bass Comb", value: String(format: "%.2f", cfg.bassGravityComb)).font(.caption)
+                Slider(value: Bindable(cfg).bassGravityComb, in: 0...3)
+                LabeledContent("Treble Ruffle", value: String(format: "%.2f", cfg.trebleRuffle)).font(.caption)
+                Slider(value: Bindable(cfg).trebleRuffle, in: 0...3)
+                LabeledContent("Hue Offset", value: String(format: "%+.2f", cfg.hueOffset)).font(.caption)
+                Slider(value: Bindable(cfg).hueOffset, in: -0.5...0.5)
+                LabeledContent("Highlight Hue", value: String(format: "%.2f", cfg.highlightHueOffset)).font(.caption)
+                Slider(value: Bindable(cfg).highlightHueOffset, in: 0...1)
+                LabeledContent("Gust", value: String(format: "%.2f", cfg.gustStrength)).font(.caption)
+                Slider(value: Bindable(cfg).gustStrength, in: 0...3)
+                LabeledContent("Sub-surface", value: String(format: "%.2f", cfg.subSurface)).font(.caption)
+                Slider(value: Bindable(cfg).subSurface, in: 0...2)
+                LabeledContent("Audio Glow", value: String(format: "%.2f", cfg.audioGlow)).font(.caption)
+                Slider(value: Bindable(cfg).audioGlow, in: 0...2)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1.5)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var origamiBodySection: some View {
+        let cfg = manager.origamiBody
+        GroupBox("Origami Body") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Grid Size", value: String(format: "%.3f", cfg.gridSize)).font(.caption)
+                Slider(value: Bindable(cfg).gridSize, in: 0.020...0.080)
+                LabeledContent("Fold Speed", value: String(format: "%.2f", cfg.foldSpeed)).font(.caption)
+                Slider(value: Bindable(cfg).foldSpeed, in: 0...3)
+                LabeledContent("Onset Refold", value: String(format: "%.2f", cfg.onsetRefold)).font(.caption)
+                Slider(value: Bindable(cfg).onsetRefold, in: 0...1)
+                LabeledContent("Palette Bal", value: String(format: "%.2f", cfg.paletteBalance)).font(.caption)
+                Slider(value: Bindable(cfg).paletteBalance, in: 0...1)
+                LabeledContent("Paper Warmth", value: String(format: "%.2f", cfg.paperWarmth)).font(.caption)
+                Slider(value: Bindable(cfg).paperWarmth, in: 0...1)
+                LabeledContent("Ink Bleed", value: String(format: "%.2f", cfg.inkBleed)).font(.caption)
+                Slider(value: Bindable(cfg).inkBleed, in: 0...2)
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling)).font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+                LabeledContent("Brush Contrast", value: String(format: "%.2f", cfg.brushContrast)).font(.caption)
+                Slider(value: Bindable(cfg).brushContrast, in: 0...2)
+            }
+        }
     }
 
     @ViewBuilder

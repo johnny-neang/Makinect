@@ -9,6 +9,13 @@ import MetalKit
 
 @MainActor
 final class StainedCathedralVisualizer: Visualizer {
+    private struct Params {
+        /// (sectorCount, ringCount, traceryWidth, innerGlow)
+        var cfg: SIMD4<Float>
+        /// (godRayStrength, dustIntensity, onsetFlash, bodyHaloHue)
+        var misc: SIMD4<Float>
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -34,9 +41,16 @@ final class StainedCathedralVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.stainedCathedral
+        var params = Params(
+            cfg: SIMD4<Float>(Float(cfg.sectorCount), Float(cfg.ringCount), cfg.traceryWidth, cfg.innerGlow),
+            misc: SIMD4<Float>(cfg.godRayStrength, cfg.dustIntensity, cfg.onsetFlash, cfg.bodyHaloHue)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

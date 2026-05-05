@@ -261,7 +261,19 @@ struct MetalKinectView: NSViewRepresentable {
                 voxelSculpt: manager.voxelSculpt,
                 kineticWireframe: manager.kineticWireframe,
                 bodyPaint: manager.bodyPaint,
-                cathedralOfBones: manager.cathedralOfBones
+                cathedralOfBones: manager.cathedralOfBones,
+                hyperbolicTunnel: manager.hyperbolicTunnel,
+                iridescentPlumage: manager.iridescentPlumage,
+                origamiBody: manager.origamiBody,
+                stainedCathedral: manager.stainedCathedral,
+                glassOcean: manager.glassOcean,
+                forestOfLight: manager.forestOfLight,
+                spectralOcean: manager.spectralOcean,
+                liquidChromeBody: manager.liquidChromeBody,
+                velvetPetalField: manager.velvetPetalField,
+                magneticIronFilings: manager.magneticIronFilings,
+                boidsMurmuration: manager.boidsMurmuration,
+                memoryPalace: manager.memoryPalace
             )
 
             viz.draw(in: view, encoder: offEncoder, inputs: inputs)
