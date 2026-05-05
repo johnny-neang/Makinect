@@ -92,10 +92,13 @@ struct MKPerformanceView: View {
             }
             .padding(12)
 
-            // Panic flash
-            if app.isPanicking {
-                Color.black.transition(.opacity)
-            }
+            // Panic flash — driven by app.panicPhase, which toggles
+            // through 3 cycles in 600 ms (200 ms per cycle). Visible
+            // even without a withAnimation block since opacity is
+            // bound directly to a state-driven value.
+            Color.black
+                .opacity(app.panicPhase == 1 ? 1.0 : 0.0)
+                .allowsHitTesting(false)
         }
         .background(Color.black)
     }
@@ -140,49 +143,7 @@ struct MKPerformanceView: View {
     }
 
     private func scenePad(idx: Int, kind: VisualizationKind) -> some View {
-        let live = manager.visualization == kind
-        let armed = app.armedKind == kind
-
-        return Button {
-            if live {
-                // already live — no-op
-            } else if armed {
-                manager.visualization = kind
-                app.armedKind = nil
-            } else if app.armedKind == nil {
-                app.armedKind = kind
-            } else {
-                // re-arm a different scene
-                app.armedKind = kind
-            }
-        } label: {
-            VStack(spacing: 2) {
-                Text("⌃\(idx + 1)")
-                    .font(MK.Font.mono09)
-                    .foregroundStyle(live ? Color(red: 0, green: 0.06, blue: 0.09)
-                                          : (armed ? MK.Color.accentWarm : MK.Color.textTertiary))
-                    .opacity(live ? 0.6 : 1)
-                Text(kind.rawValue)
-                    .font(MK.Font.label10)
-                    .foregroundStyle(live ? Color(red: 0, green: 0.06, blue: 0.09)
-                                          : (armed ? MK.Color.accentWarm : MK.Color.textSecondary))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .padding(.horizontal, 4)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(live ? MK.Color.accent
-                              : (armed ? MK.Color.accentWarm.opacity(0.15)
-                                       : Color.white.opacity(0.04)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .stroke(armed ? MK.Color.accentWarm : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
+        MKScenePad(idx: idx, kind: kind, manager: manager, app: app)
     }
 
     // MARK: - NOW PLAYING
@@ -221,7 +182,10 @@ struct MKPerformanceView: View {
                     formatted: String(format: "%+.2f", manager.common.hueShift),
                     range: 0...1,
                     tint: MK.Color.magenta,
-                    midiTag: "CC74",
+                    // MIDI tag intentionally nil until the CoreMIDI mapping
+                    // engine ships — the badge advertises a binding that
+                    // doesn't exist, which is more confusing than useful.
+                    midiTag: nil,
                     onChange: { manager.common.hueShift = Float($0) - 0.5 }
                 )
             }
@@ -262,19 +226,30 @@ struct MKPerformanceView: View {
                 ForEach(0..<16) { i in
                     let isDownbeat = (i % 4 == 0)
                     let isNow = i == nowBeatIndex
-                    ZStack(alignment: .bottom) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(isNow ? MK.Color.accent
-                                       : (isDownbeat ? MK.Color.accent.opacity(0.12)
-                                                    : Color.white.opacity(0.04)))
-                        Text(isDownbeat ? "\(i / 4 + 1)" : "\(i % 4 + 1)")
-                            .font(MK.Font.mono09)
-                            .foregroundStyle(isNow ? Color(red: 0, green: 0.06, blue: 0.09)
-                                                  : (isDownbeat ? MK.Color.accent : MK.Color.textTertiary))
-                            .padding(.bottom, 3)
+                    Button {
+                        // Visual jog — re-anchor the wall-clock-driven
+                        // playhead so the clicked cell becomes "now".
+                        let beatSec = 60.0 / max(20, Double(currentBPM))
+                        let target = Double(i) * beatSec
+                        let phase = Date().timeIntervalSince1970
+                            .truncatingRemainder(dividingBy: beatSec * 16)
+                        app.beatPhaseOffset = phase - target
+                    } label: {
+                        ZStack(alignment: .bottom) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(isNow ? MK.Color.accent
+                                           : (isDownbeat ? MK.Color.accent.opacity(0.12)
+                                                        : Color.white.opacity(0.04)))
+                            Text(isDownbeat ? "\(i / 4 + 1)" : "\(i % 4 + 1)")
+                                .font(MK.Font.mono09)
+                                .foregroundStyle(isNow ? Color(red: 0, green: 0.06, blue: 0.09)
+                                                      : (isDownbeat ? MK.Color.accent : MK.Color.textTertiary))
+                                .padding(.bottom, 3)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .shadow(color: isNow ? MK.Color.accent : .clear, radius: 6)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .shadow(color: isNow ? MK.Color.accent : .clear, radius: 6)
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 8)
@@ -286,8 +261,12 @@ struct MKPerformanceView: View {
 
     private var transport: some View {
         HStack(spacing: 16) {
-            // TAP
-            Button { app.tap() } label: {
+            // TAP — drives both manual BPM (instant feedback) and the
+            // DSP detector (so heard tempo locks to tap evidence).
+            Button {
+                app.tap()
+                manager.audio.tapTempo()
+            } label: {
                 Text("TAP ⌥T")
                     .font(MK.Font.label12).bold()
                     .foregroundStyle(Color(red: 0.10, green: 0.05, blue: 0))
@@ -313,6 +292,31 @@ struct MKPerformanceView: View {
                     .font(MK.Font.label09).tracking(1.0)
                     .foregroundStyle(MK.Color.textTertiary)
                 Text(barBeatString).font(MK.Font.mono14).foregroundStyle(MK.Color.textPrimary)
+            }
+
+            // Source picker — finally surfaces Kinect/Synthetic in the
+            // entry tab without the user having to dig into Settings.
+            sourceMenu
+
+            // Connect / Disconnect — visible status pill + action button
+            // for the Kinect lifecycle. Hidden in Synthetic mode since
+            // there's nothing to connect to.
+            if manager.source == .kinect {
+                Button {
+                    if manager.isConnected { manager.disconnect() }
+                    else                   { manager.connect() }
+                } label: {
+                    HStack(spacing: 6) {
+                        MKPip(color: manager.isConnected ? MK.Color.success : MK.Color.danger)
+                        Text(manager.isConnected ? "Connected" : "Connect")
+                            .font(MK.Font.label11)
+                            .foregroundStyle(MK.Color.textPrimary)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(MK.Color.hairlineStrong, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
             }
 
             // Audio meter + LUFS
@@ -359,6 +363,39 @@ struct MKPerformanceView: View {
         }
     }
 
+    // MARK: - Source picker
+
+    private var sourceMenu: some View {
+        Menu {
+            ForEach(InputSource.allCases) { src in
+                Button {
+                    manager.source = src
+                    // When flipping to Synthetic, give the user pixels
+                    // immediately. Mirrors SidePanel's heuristic.
+                    if src == .synthetic, manager.visualization == nil {
+                        manager.visualization = .pointCloud
+                    }
+                } label: {
+                    Label(src.rawValue,
+                          systemImage: manager.source == src ? "checkmark" : "")
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                MKPip(color: manager.source == .kinect ? MK.Color.accent : MK.Color.accentWarm)
+                Text(manager.source.rawValue)
+                    .font(MK.Font.label11)
+                    .foregroundStyle(MK.Color.textPrimary)
+                Text("▾").font(MK.Font.mono09).foregroundStyle(MK.Color.textTertiary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(MK.Color.hairlineStrong, lineWidth: 1))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
     // MARK: - Derived state
 
     private var currentBPMString: String {
@@ -369,12 +406,21 @@ struct MKPerformanceView: View {
         return String(format: "%.1f", v)
     }
 
+    private var currentBPM: Float {
+        if app.hasManualBPM { return app.manualBPM }
+        if manager.audio.bpm > 1 { return manager.audio.bpm }
+        return 124.0
+    }
+
     private var nowBeatIndex: Int {
-        let bpm = max(20, Double(app.hasManualBPM ? app.manualBPM
-                                                  : (manager.audio.bpm > 1 ? manager.audio.bpm : 124.0)))
+        let bpm = max(20, Double(currentBPM))
         let beatSec = 60.0 / bpm
-        let phase = Date().timeIntervalSince1970.truncatingRemainder(dividingBy: beatSec * 16)
-        return Int(phase / beatSec) % 16
+        // Subtract the beat-grid jog offset so the user-clicked cell
+        // becomes "now" until wall-clock advances past it.
+        let phase = (Date().timeIntervalSince1970 - app.beatPhaseOffset)
+            .truncatingRemainder(dividingBy: beatSec * 16)
+        let normalized = phase < 0 ? phase + beatSec * 16 : phase
+        return Int(normalized / beatSec) % 16
     }
 
     private var barBeatString: String {
@@ -385,6 +431,12 @@ struct MKPerformanceView: View {
     private var aiAssistMessage: String {
         if manager.audio.onset {
             return "Onset · raise drop intensity"
+        }
+        if manager.audio.keyConfidence > 0.6, manager.audio.keyName != "—" {
+            return "Key \(manager.audio.keyName) · \(manager.audio.chordName)"
+        }
+        if manager.audio.pitchConfidence > 0.6, manager.audio.pitchNoteName != "—" {
+            return "Pitch \(manager.audio.pitchNoteName) · \(String(format: "%.0f Hz", manager.audio.pitchHz))"
         }
         if manager.audio.bpm > 1 {
             return "Tempo locked · \(String(format: "%.1f", manager.audio.bpm)) BPM"
@@ -437,6 +489,72 @@ private struct MKSkeletonMini: View {
                     }
                     .stroke(MK.Color.accent.opacity(0.7), lineWidth: 1)
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Scene pad (with armed-pulse animation + ⌃N shortcut)
+
+private struct MKScenePad: View {
+    let idx: Int
+    let kind: VisualizationKind
+    @Bindable var manager: KinectManager
+    @Bindable var app: MKAppState
+    @State private var pulse: Bool = false
+
+    var body: some View {
+        let live = manager.visualization == kind
+        let armed = app.armedKind == kind
+        let armedOpacity: Double = armed ? (pulse ? 1.0 : 0.55) : 1.0
+
+        return Button {
+            if live {
+                // already live — no-op
+            } else if armed {
+                manager.visualization = kind
+                app.armedKind = nil
+            } else {
+                // (re-)arm any pad
+                app.armedKind = kind
+            }
+        } label: {
+            VStack(spacing: 2) {
+                Text("⌃\(idx + 1)")
+                    .font(MK.Font.mono09)
+                    .foregroundStyle(live ? Color(red: 0, green: 0.06, blue: 0.09)
+                                          : (armed ? MK.Color.accentWarm : MK.Color.textTertiary))
+                    .opacity(live ? 0.6 : 1)
+                Text(kind.rawValue)
+                    .font(MK.Font.label10)
+                    .foregroundStyle(live ? Color(red: 0, green: 0.06, blue: 0.09)
+                                          : (armed ? MK.Color.accentWarm : MK.Color.textSecondary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(live ? MK.Color.accent
+                              : (armed ? MK.Color.accentWarm.opacity(0.15)
+                                       : Color.white.opacity(0.04)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(armed ? MK.Color.accentWarm : Color.clear, lineWidth: 1)
+            )
+            .opacity(armedOpacity)
+        }
+        .buttonStyle(.plain)
+        // ⌃1 … ⌃8 — first 8 pads only (KeyEquivalent only takes one char)
+        .keyboardShortcut(
+            KeyEquivalent(Character(String(idx + 1))),
+            modifiers: .control
+        )
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
+                pulse.toggle()
             }
         }
     }

@@ -4,14 +4,41 @@
 
 import SwiftUI
 
+// MARK: - Preview banner (shared)
+
+/// Amber banner sat across the top of the not-yet-wired tabs (MIDI,
+/// Output, and the legacy Presets timeline mock). Communicates that the
+/// layout is real but the backend is still landing.
+struct MKPreviewBanner: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: 8) {
+            MKPip(color: MK.Color.accentWarm)
+            Text(text)
+                .font(MK.Font.label11)
+                .foregroundStyle(MK.Color.accentWarm)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(MK.Color.accentWarm.opacity(0.06))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(MK.Color.accentWarm.opacity(0.3)).frame(height: 1)
+        }
+    }
+}
+
 // MARK: - MIDI Mapping
 
 struct MKMidiScreen: View {
     var body: some View {
-        HStack(spacing: 0) {
-            devRail.frame(width: 280)
-            mapGrid.frame(maxWidth: .infinity, maxHeight: .infinity)
-            rightDetail.frame(width: 320)
+        VStack(spacing: 0) {
+            MKPreviewBanner(text: "Preview only — CoreMIDI mapping engine ships in Phase 2.")
+            HStack(spacing: 0) {
+                devRail.frame(width: 280)
+                mapGrid.frame(maxWidth: .infinity, maxHeight: .infinity)
+                rightDetail.frame(width: 320)
+            }
         }
         .background(MK.Color.bgWindow)
     }
@@ -311,20 +338,23 @@ struct MKMidiScreen: View {
 
 struct MKOutputScreen: View {
     var body: some View {
-        VStack(spacing: 16) {
-            Text("▾ DISPLAY ARRANGEMENT · drag to position · 8 px = 1 m")
-                .font(MK.Font.mono09).tracking(0.8)
-                .foregroundStyle(MK.Color.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            MKPreviewBanner(text: "Preview only — multi-display NSWindow output ships in Phase 2.")
+            VStack(spacing: 16) {
+                Text("▾ DISPLAY ARRANGEMENT · drag to position · 8 px = 1 m")
+                    .font(MK.Font.mono09).tracking(0.8)
+                    .foregroundStyle(MK.Color.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            layoutStage
-                .frame(maxHeight: .infinity)
+                layoutStage
+                    .frame(maxHeight: .infinity)
 
-            dispList
-                .frame(maxHeight: 320)
+                dispList
+                    .frame(maxHeight: 320)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MK.Color.bgWindow)
     }
 

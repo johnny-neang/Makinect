@@ -48,13 +48,31 @@ struct MKLibraryView: View {
             .padding(12)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(filteredKinds, id: \.self) { kind in
-                        vizRow(kind)
+                if filteredKinds.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No matches for \"\(query)\"")
+                            .font(MK.Font.label11)
+                            .foregroundStyle(MK.Color.textSecondary)
+                        Button { query = "" } label: {
+                            Text("Reset filter")
+                                .font(MK.Font.label10)
+                                .foregroundStyle(MK.Color.accent)
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(RoundedRectangle(cornerRadius: 5)
+                                    .fill(MK.Color.accentDim))
+                        }
+                        .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, 12).padding(.top, 8)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(filteredKinds, id: \.self) { kind in
+                            vizRow(kind)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
             }
         }
         .background(MK.Color.bgSidebar)
@@ -113,11 +131,11 @@ struct MKLibraryView: View {
             .padding(6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(active ? MK.Color.accent.opacity(0.08) : Color.clear)
+                    .fill(active ? MK.Color.accent.opacity(0.16) : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(active ? MK.Color.accentDim : Color.clear, lineWidth: 1)
+                    .stroke(active ? MK.Color.accent : Color.clear, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -306,7 +324,13 @@ struct MKLibraryView: View {
             return allKinds.filter { MKVizCategory.category(for: $0) == selectedCategory }
         }()
         if query.isEmpty { return inCat }
-        return inCat.filter { $0.rawValue.localizedCaseInsensitiveContains(query) }
+        // Match against viz name AND category label so typing
+        // "particle" or "volumetric" widens the search beyond raw names.
+        return inCat.filter { kind in
+            kind.rawValue.localizedCaseInsensitiveContains(query)
+                || MKVizCategory.category(for: kind).label
+                    .localizedCaseInsensitiveContains(query)
+        }
     }
 
     private func countFor(_ cat: MKVizCategory) -> Int {
