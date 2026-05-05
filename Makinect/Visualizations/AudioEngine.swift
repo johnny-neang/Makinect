@@ -208,11 +208,18 @@ final class AudioEngine {
     func start() {
         guard !isRunning else { return }
 
+        // — Diagnostic — log the bundle ID + current TCC status so the user
+        //   can confirm what TCC key the app is keyed under, and what state
+        //   the system says the permission is in. Visible in Xcode console.
+        let bid = Bundle.main.bundleIdentifier ?? "<no bundle id>"
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        NSLog("Makinect.AudioEngine.start() — bundle=\(bid) auth=\(status.rawValue) (\(authStatusName(status)))")
+
         // — Microphone permission. macOS won't deliver real audio until the
         //   user clicks "Allow" in the system prompt; without an explicit
         //   request the prompt never fires and `installTap` quietly receives
         //   silent (all-zero) buffers, so the audio monitor stays blank.
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        switch status {
         case .authorized:
             permission = .authorized
             startEngineNow()
@@ -231,6 +238,45 @@ final class AudioEngine {
             permission = .restricted
         @unknown default:
             permission = .denied
+        }
+    }
+
+    /// Manually trigger the system mic permission prompt. No-op if status
+    /// is already .authorized or .denied — the prompt only fires on
+    /// .notDetermined. Wire this to a UI "Request Microphone" button.
+    func requestPermission() {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        if status == .notDetermined {
+            permission = .requesting
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.permission = granted ? .authorized : .denied
+                    if granted, !self.isRunning { self.startEngineNow() }
+                }
+            }
+        } else {
+            permission = (status == .authorized) ? .authorized : .denied
+            if status == .authorized, !isRunning { startEngineNow() }
+        }
+    }
+
+    /// Open System Settings → Privacy & Security → Microphone so the user
+    /// can manually grant access when the system prompt has already fired
+    /// and been denied (TCC blocks re-prompting once denied).
+    func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func authStatusName(_ status: AVAuthorizationStatus) -> String {
+        switch status {
+        case .authorized: return "authorized"
+        case .denied: return "denied"
+        case .restricted: return "restricted"
+        case .notDetermined: return "notDetermined"
+        @unknown default: return "unknown"
         }
     }
 

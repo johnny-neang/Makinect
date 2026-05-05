@@ -23,13 +23,25 @@ struct AudioMonitorView: View {
             //   commonly because the user hasn't granted mic permission,
             //   or because a silent device (Kinect) is selected.
             if audio.permission != .authorized {
-                HStack(spacing: 6) {
-                    Image(systemName: audio.permission == .denied ? "mic.slash.fill" : "mic.fill")
-                        .foregroundStyle(audio.permission == .denied ? .red : .yellow)
-                    Text("Mic: \(audio.permission.rawValue)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: audio.permission == .denied ? "mic.slash.fill" : "mic.fill")
+                            .foregroundStyle(audio.permission == .denied ? .red : .yellow)
+                        Text("Mic: \(audio.permission.rawValue)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Spacer()
+                    }
+                    HStack(spacing: 6) {
+                        Button("Request") { audio.requestPermission() }
+                            .controlSize(.mini)
+                            .buttonStyle(.bordered)
+                        Button("Open Settings") { audio.openMicrophoneSettings() }
+                            .controlSize(.mini)
+                            .buttonStyle(.bordered)
+                        Spacer()
+                    }
                 }
             } else {
                 HStack(spacing: 6) {
