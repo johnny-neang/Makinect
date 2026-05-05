@@ -2,6 +2,7 @@
 // (Stream Mode + Depth Range + Kinect device + ResourceMonitor) screens.
 
 import SwiftUI
+import CoreAudio
 
 // MARK: - Audio
 
