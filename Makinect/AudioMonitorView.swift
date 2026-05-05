@@ -18,6 +18,34 @@ struct AudioMonitorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // — Permission + flow diagnostic. If `tapCallbackCount` stays at
+            //   0 after the engine starts, audio isn't reaching us — most
+            //   commonly because the user hasn't granted mic permission,
+            //   or because a silent device (Kinect) is selected.
+            if audio.permission != .authorized {
+                HStack(spacing: 6) {
+                    Image(systemName: audio.permission == .denied ? "mic.slash.fill" : "mic.fill")
+                        .foregroundStyle(audio.permission == .denied ? .red : .yellow)
+                    Text("Mic: \(audio.permission.rawValue)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                        .foregroundStyle(audio.tapCallbackCount > 0 ? .green : .secondary)
+                    Text("Buffers: \(audio.tapCallbackCount)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let err = audio.lastEngineError {
+                        Spacer()
+                        Text(err).font(.caption2).foregroundStyle(.red).lineLimit(1)
+                    }
+                    Spacer()
+                }
+            }
+
             WaveformView(samples: audio.waveform)
                 .frame(height: 50)
 

@@ -3,12 +3,24 @@
 
 import AVFoundation
 import Accelerate
+import AppKit
 import Foundation
 
 struct AudioInputDevice: Identifiable, Hashable {
     let id: AudioDeviceID
     let name: String
     let isKinect: Bool
+}
+
+/// Microphone authorization state. macOS will refuse to deliver real audio
+/// (silent buffers) until this is `.authorized` — the user must hit "Allow"
+/// in the system permission prompt that fires on first explicit request.
+enum AudioPermission: String {
+    case undetermined = "Awaiting permission…"
+    case requesting   = "Requesting permission…"
+    case authorized   = "Authorized"
+    case denied       = "Denied — open System Settings → Privacy → Microphone"
+    case restricted   = "Restricted by parental controls"
 }
 
 @Observable
@@ -57,6 +69,15 @@ final class AudioEngine {
 
     var availableInputs: [AudioInputDevice] = []
     var selectedInputID: AudioDeviceID?
+
+    // — Permission + diagnostics
+    var permission: AudioPermission = .undetermined
+    /// Increments every time the audio render thread delivers a buffer.
+    /// Watch this to confirm audio is flowing — if it stays at 0 after
+    /// `start()`, the tap isn't firing (permission denied / silent device).
+    var tapCallbackCount: UInt64 = 0
+    /// Last error from `engine.start()`, exposed for the side-panel.
+    var lastEngineError: String?
 
     @ObservationIgnored private let engine = AVAudioEngine()
     @ObservationIgnored private var switchGeneration: Int = 0
@@ -142,7 +163,17 @@ final class AudioEngine {
 
         availableInputs = inputs
         if selectedInputID == nil {
-            selectedInputID = inputs.first(where: \.isKinect)?.id ?? inputs.first?.id
+            // Prefer the system default input. Picking the Kinect mic by
+            // default is misleading because the Kinect v2 mic array isn't
+            // wired to libfreenect2's audio path on macOS — AVAudioEngine
+            // will tap the device but receive silent buffers.
+            let sysDefault = systemDefaultInputDevice()
+            if sysDefault != 0, inputs.contains(where: { $0.id == sysDefault }) {
+                selectedInputID = sysDefault
+            } else {
+                selectedInputID = inputs.first(where: { !$0.isKinect })?.id
+                                  ?? inputs.first?.id
+            }
         }
     }
 
@@ -175,6 +206,36 @@ final class AudioEngine {
     }
 
     func start() {
+        guard !isRunning else { return }
+
+        // — Microphone permission. macOS won't deliver real audio until the
+        //   user clicks "Allow" in the system prompt; without an explicit
+        //   request the prompt never fires and `installTap` quietly receives
+        //   silent (all-zero) buffers, so the audio monitor stays blank.
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            permission = .authorized
+            startEngineNow()
+        case .notDetermined:
+            permission = .requesting
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.permission = granted ? .authorized : .denied
+                    if granted { self.startEngineNow() }
+                }
+            }
+        case .denied:
+            permission = .denied
+        case .restricted:
+            permission = .restricted
+        @unknown default:
+            permission = .denied
+        }
+    }
+
+    /// Internal — called once permission is .authorized.
+    private func startEngineNow() {
         guard !isRunning else { return }
 
         // Tear down any prior tap + stop, regardless of `isRunning` state.
@@ -234,10 +295,11 @@ final class AudioEngine {
         do {
             try engine.start()
             isRunning = true
+            lastEngineError = nil
         } catch {
-            // Roll back the tap so a retry has a clean slate.
             input.removeTap(onBus: 0)
             isRunning = false
+            lastEngineError = error.localizedDescription
         }
     }
 
@@ -353,7 +415,12 @@ final class AudioEngine {
         guard let channelData = buffer.floatChannelData else { return }
         let frameLength = Int(buffer.frameLength)
         let n = AudioEngine.fftSize
-        guard frameLength >= n else { return }
+        guard frameLength > 0 else { return }
+
+        // Bump the tap-fired counter so the UI can verify audio is flowing.
+        // Snapshot to a local first so the SwiftUI tracker only sees one
+        // change per main-thread hop (we publish below in the dispatch).
+        let newTapCount = tapCallbackCount &+ 1
 
         // — Append the entire input buffer to the waveform ring (at full
         //   `frameLength`, not just `n`). The ring is the source-of-truth
@@ -365,8 +432,16 @@ final class AudioEngine {
         updateLUFS(channelData: channelData[0], count: frameLength,
                    sampleRate: Float(buffer.format.sampleRate))
 
-        // Reuse pre-allocated `samples` (no per-callback heap allocation).
-        for i in 0..<n { samples[i] = channelData[0][i] }
+        // — Pull the latest N samples from the waveform ring for the FFT
+        //   instead of requiring the buffer be ≥ N. AVAudioEngine often
+        //   delivers smaller buffers (256–512 samples) than the requested
+        //   bufferSize hint, especially at non-default sample rates. Reading
+        //   from the ring lets us run the FFT on every callback regardless.
+        let cap = AudioEngine.waveformSize
+        for i in 0..<n {
+            let idx = (waveformWritePos - n + i + cap) % cap
+            samples[i] = waveformRing[idx]
+        }
 
         var rmsValue: Float = 0
         vDSP_rmsqv(samples, 1, &rmsValue, vDSP_Length(n))
@@ -478,6 +553,7 @@ final class AudioEngine {
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.tapCallbackCount = newTapCount
             self.bands[0] = self.bands[0] * 0.6 + snap.0 * 0.4
             self.bands[1] = self.bands[1] * 0.6 + snap.1 * 0.4
             self.bands[2] = self.bands[2] * 0.6 + snap.2 * 0.4
