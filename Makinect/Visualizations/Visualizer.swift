@@ -26,6 +26,9 @@ struct VisualizerInputs {
     let mercuryStorm: MercuryStormConfig
     let mandelbulbAviary: MandelbulbAviaryConfig
     let bodyOfPetals: BodyOfPetalsConfig
+    let mocapConstellation: MocapConstellationConfig
+    let sandMandala: SandMandalaConfig
+    let strandVeil: StrandVeilConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

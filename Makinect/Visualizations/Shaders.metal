@@ -3613,6 +3613,7 @@ fragment float4 dissipative_cells_fs(
 struct MCUniforms {
     float4 ctrl;     // (time, count, aspect, _)
     float4 audio;    // (rms, onset, bassLow, treb)
+    float4 visual;   // (starCoreSize, ringGrowth, ringWidth, audioCoupling)
 };
 
 struct MCStar {
@@ -3646,14 +3647,14 @@ fragment float4 mocap_constellation_fs(
         float r = length(p - sp);
         float life = exp(-age * 0.45);
 
-        // Star core: bright twinkle.
-        float core = exp(-r * r * 1500.0) * (1.0 + u.audio.x * 0.6);
+        // Star core: bright twinkle. Size + audio coupling user-controlled.
+        float core = exp(-r * r * u.visual.x) * (1.0 + u.audio.x * u.visual.w);
         float3 starCol = hsv2rgb(float3(s.posBirthHue.w, 0.7, 1.0));
         col += starCol * core * life * s.energy.x;
 
-        // Shockwave: a moving ring centred at birth time.
-        float ringR = age * 0.18;
-        float ringW = 0.012;
+        // Shockwave: ring growth + width user-controlled.
+        float ringR = age * u.visual.y;
+        float ringW = u.visual.z;
         float ring = exp(-pow(r - ringR, 2.0) / (ringW * ringW)) * 0.20 * life;
         col += starCol * ring * (1.0 + u.audio.z * 1.5);
     }
@@ -3765,7 +3766,8 @@ fragment float4 ll_composite_fs(
 struct SVUniforms {
     float4 ctrl;        // (time, count, segments, _)
     float4 audio;       // (rms, onset, bassLow, treb)
-    float4 aspectFlow;  // (aspect, flowScale, gravity, _)
+    float4 aspectFlow;  // (aspect, flowScale, gravity, audioCoupling)
+    float4 style;       // (baseHue, hueSpread, strandLength, _)
 };
 
 struct SVStrandHead {
@@ -3856,6 +3858,8 @@ vertex SVOut sv_strand_vs(
     SVStrandHead h = heads[iid];
     int segments = int(u.ctrl.z);
     float segT = float(vid) / float(segments - 1);
+    // Strand length user-controlled (multiplied with per-strand random length).
+    float lenScale = u.style.z;
     // March from the head along curl noise to build the strand body.
     float2 p = h.posPhase.xy;
     float t = u.ctrl.x;
@@ -3863,15 +3867,20 @@ vertex SVOut sv_strand_vs(
         if (float(i) / float(segments - 1) > segT) break;
         float2 v = sv_curl(p, t + float(i) * 0.08, u.aspectFlow.y);
         v += float2(0, -u.aspectFlow.z * 0.6);
-        p += v * h.posPhase.w / float(segments);
+        p += v * h.posPhase.w * lenScale / float(segments);
     }
     SVOut o;
     o.position = float4(p, 0, 1);
-    // Anisotropic-ish color: jewel-tone hue from strand seed, brightness from speed.
-    float3 col = hsv2rgb(float3(h.velocityHue.z, 0.6, 1.0));
+
+    // Color: base hue + per-strand offset. hueSpread=0 makes monochrome;
+    // hueSpread=1 spreads across the whole circle.
+    float hue = fract(u.style.x + (h.velocityHue.z - 0.5) * u.style.y);
+    float3 col = hsv2rgb(float3(hue, 0.6, 1.0));
     float speed = length(h.velocityHue.xy);
     float life = 1.0 - segT * 0.7;
-    o.color = float4(col * life * (0.3 + u.audio.x * 0.7 + speed * 8.0), life * 0.3);
+    // audioCoupling user-controlled.
+    float audioBoost = 0.3 + u.audio.x * u.aspectFlow.w + speed * 8.0;
+    o.color = float4(col * life * audioBoost, life * 0.3);
     return o;
 }
 

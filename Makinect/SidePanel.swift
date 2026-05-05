@@ -220,6 +220,169 @@ struct SidePanel: View {
         if manager.visualization == .bodyOfPetals {
             bodyOfPetalsSection
         }
+
+        if manager.visualization == .mocapConstellation {
+            mocapConstellationSection
+        }
+
+        if manager.visualization == .sandMandala {
+            sandMandalaSection
+        }
+
+        if manager.visualization == .strandVeil {
+            strandVeilSection
+        }
+    }
+
+    @ViewBuilder
+    private var strandVeilSection: some View {
+        let cfg = manager.strandVeil
+        GroupBox("Strand Veil — Density") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Strands", value: "\(cfg.strandCount / 1000)k")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.strandCount) },
+                        set: { cfg.strandCount = Int($0) }
+                    ),
+                    in: 1000...16000, step: 500
+                )
+
+                LabeledContent("Length", value: String(format: "%.2f", cfg.strandLength))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).strandLength, in: 0.5...2.5)
+            }
+        }
+
+        GroupBox("Strand Veil — Flow") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Flow Scale", value: String(format: "%.2f", cfg.flowScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).flowScale, in: 0.2...2.0)
+
+                LabeledContent("Bass→Flow", value: String(format: "%.2f", cfg.flowAudioMod))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).flowAudioMod, in: 0...2)
+
+                LabeledContent("Gravity", value: String(format: "%.2f", cfg.gravity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).gravity, in: 0...1)
+            }
+        }
+
+        GroupBox("Strand Veil — Color") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+
+                LabeledContent("Hue Spread", value: String(format: "%.2f", cfg.hueSpread))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueSpread, in: 0...1)
+
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sandMandalaSection: some View {
+        let cfg = manager.sandMandala
+        GroupBox("Sand Mandala — Density") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Grains", value: "\(cfg.grainCount / 1000)k")
+                    .font(.caption)
+                Slider(
+                    value: Binding(
+                        get: { Double(cfg.grainCount) },
+                        set: { cfg.grainCount = Int($0) }
+                    ),
+                    in: 1024...262144, step: 4096
+                )
+            }
+        }
+
+        GroupBox("Sand Mandala — Pattern") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Symmetry", value: String(format: "%.0f-fold", cfg.symmetry))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).symmetry, in: 4...16, step: 1)
+
+                LabeledContent("Ring Scale", value: String(format: "%.2f", cfg.ringScale))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).ringScale, in: 0.20...0.70)
+
+                LabeledContent("Rotate Speed", value: String(format: "%.4f", cfg.rotationSpeed))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).rotationSpeed, in: 0...0.01)
+            }
+        }
+
+        GroupBox("Sand Mandala — Physics") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Spring K", value: String(format: "%.3f", cfg.springK))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).springK, in: 0.005...0.05)
+
+                LabeledContent("Damping", value: String(format: "%.3f", cfg.damping))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).damping, in: 0.85...0.96)
+
+                LabeledContent("Onset Morph", value: String(format: "%.2f", cfg.onsetMorph))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).onsetMorph, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var mocapConstellationSection: some View {
+        let cfg = manager.mocapConstellation
+        GroupBox("Mocap Constellation — Emission") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Rate", value: String(format: "%.2fs", cfg.emissionRate))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).emissionRate, in: 0.02...0.5)
+
+                LabeledContent("Lifespan", value: String(format: "%.1fs", cfg.starLifespan))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).starLifespan, in: 2...15)
+            }
+        }
+
+        GroupBox("Mocap Constellation — Stars") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Core Size", value: String(format: "%.0f", cfg.starCoreSize))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).starCoreSize, in: 500...3000)
+
+                LabeledContent("Ring Growth", value: String(format: "%.2f", cfg.ringGrowth))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).ringGrowth, in: 0...0.5)
+
+                LabeledContent("Ring Width", value: String(format: "%.3f", cfg.ringWidth))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).ringWidth, in: 0.005...0.04)
+
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
+
+        GroupBox("Mocap Constellation — Color") {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Per-joint hues", isOn: Bindable(cfg).randomizeHue)
+                    .font(.callout)
+
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+            }
+        }
     }
 
     @ViewBuilder

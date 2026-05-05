@@ -15,7 +15,7 @@ import simd
 
 @MainActor
 final class SandMandalaVisualizer: Visualizer {
-    private static let grainCount = 1024 * 256   // ~262k grains
+    private static let maxGrainCount = 1024 * 256   // ~262k buffer ceiling
 
     private struct Grain {
         var current: SIMD4<Float>   // (x, y, hue, life)
@@ -58,7 +58,7 @@ final class SandMandalaVisualizer: Visualizer {
         dr.colorAttachments[0].destinationAlphaBlendFactor = .one
         guard let drawPSO = try? device.makeRenderPipelineState(descriptor: dr) else { return nil }
 
-        let bytes = MemoryLayout<Grain>.stride * Self.grainCount
+        let bytes = MemoryLayout<Grain>.stride * Self.maxGrainCount
         guard let a = device.makeBuffer(length: bytes, options: [.storageModePrivate]),
               let b = device.makeBuffer(length: bytes, options: [.storageModePrivate]) else { return nil }
 
@@ -71,30 +71,42 @@ final class SandMandalaVisualizer: Visualizer {
 
     func draw(in view: MTKView, encoder: MTLRenderCommandEncoder, inputs: VisualizerInputs) {
         let bands = inputs.audio.bands
-        // On every onset: shuffle pattern (slight rotation + new morph seed).
-        if inputs.audio.onset && lastOnset < 0.5 {
+        let cfg = inputs.sandMandala
+        let count = max(1024, min(Self.maxGrainCount, cfg.grainCount))
+
+        // Onset re-pattern (only if user enabled it).
+        if inputs.audio.onset && lastOnset < 0.5 && cfg.onsetMorph > 0.001 {
             morphSeed = Float.random(in: 0..<1)
-            rotationAccum += .pi / 6
+            rotationAccum += .pi / 6 * cfg.onsetMorph
         }
         lastOnset = inputs.audio.onset ? 1 : 0
-        rotationAccum += 0.0015
+        rotationAccum += cfg.rotationSpeed
 
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
 
         var u = SMUniforms(
-            ctrl: SIMD4<Float>(inputs.timeSeconds, Float(Self.grainCount), 0.022, 0.91 - inputs.audio.rms * 0.02),
+            ctrl: SIMD4<Float>(inputs.timeSeconds, Float(count),
+                               cfg.springK,
+                               cfg.damping - inputs.audio.rms * 0.02),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
-            pattern: SIMD4<Float>(rotationAccum, 8.0 + bassLow * 4.0, 0.45, morphSeed)
+            pattern: SIMD4<Float>(rotationAccum,
+                                  cfg.symmetry + bassLow * 4.0,
+                                  cfg.ringScale,
+                                  morphSeed)
         )
         var range = SIMD2<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM)
 
         if !initialized, let buf = inputs.textures.commandQueue.makeCommandBuffer(),
            let enc = buf.makeComputeCommandEncoder() {
+            // Init initialises the full max-buffer once so the active count
+            // can grow later without revealing uninitialized memory.
+            var initU = u
+            initU.ctrl.y = Float(Self.maxGrainCount)
             enc.setComputePipelineState(initPSO)
             enc.setBuffer(bufA, offset: 0, index: 0)
-            enc.setBytes(&u, length: MemoryLayout<SMUniforms>.stride, index: 1)
-            dispatch1D(enc: enc, pso: initPSO, count: Self.grainCount)
+            enc.setBytes(&initU, length: MemoryLayout<SMUniforms>.stride, index: 1)
+            dispatch1D(enc: enc, pso: initPSO, count: Self.maxGrainCount)
             enc.endEncoding()
             buf.commit()
             buf.waitUntilCompleted()
@@ -109,7 +121,7 @@ final class SandMandalaVisualizer: Visualizer {
             enc.setTexture(inputs.textures.registeredDepthTexture, index: 0)
             enc.setBytes(&u, length: MemoryLayout<SMUniforms>.stride, index: 2)
             enc.setBytes(&range, length: MemoryLayout<SIMD2<Float>>.stride, index: 3)
-            dispatch1D(enc: enc, pso: stepPSO, count: Self.grainCount)
+            dispatch1D(enc: enc, pso: stepPSO, count: count)
             enc.endEncoding()
             buf.commit()
             buf.waitUntilCompleted()
@@ -119,7 +131,7 @@ final class SandMandalaVisualizer: Visualizer {
         encoder.setRenderPipelineState(drawPSO)
         encoder.setVertexBuffer(bufA, offset: 0, index: 0)
         encoder.setVertexBytes(&u, length: MemoryLayout<SMUniforms>.stride, index: 1)
-        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: Self.grainCount)
+        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: count)
     }
 
     private func dispatch1D(enc: MTLComputeCommandEncoder, pso: MTLComputePipelineState, count: Int) {

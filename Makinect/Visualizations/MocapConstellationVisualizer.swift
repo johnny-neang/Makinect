@@ -24,6 +24,7 @@ final class MocapConstellationVisualizer: Visualizer {
     private struct MCUniforms {
         var ctrl: SIMD4<Float>     // (time, count, aspect, _)
         var audio: SIMD4<Float>    // (rms, onset, bassLow, treb)
+        var visual: SIMD4<Float>   // (starCoreSize, ringGrowth, ringWidth, audioCoupling)
     }
 
     private let pipeline: MTLRenderPipelineState
@@ -59,16 +60,18 @@ final class MocapConstellationVisualizer: Visualizer {
         let bands = inputs.audio.bands
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
+        let cfg = inputs.mocapConstellation
 
-        // Emit new stars: from real skeleton joints, or procedural orbits if none.
-        if now - lastEmit > 0.05 {
+        // Emit new stars at the user-configured cadence.
+        if now - lastEmit > cfg.emissionRate {
             lastEmit = now
             if !inputs.skeletons.isEmpty {
                 for skel in inputs.skeletons {
                     for j in skel.joints where j.confidence > 0.3 {
+                        let h = cfg.randomizeHue ? hueFor(joint: j.name) : cfg.baseHue
                         addStar(x: Float(j.position.x),
                                 y: Float(j.position.y),
-                                hue: hueFor(joint: j.name),
+                                hue: h,
                                 now: now,
                                 energy: 1.0 + (inputs.audio.onset ? 1.5 : 0))
                     }
@@ -80,10 +83,19 @@ final class MocapConstellationVisualizer: Visualizer {
                     let r: Float = 0.18 + Float(i % 2) * 0.12
                     let cx = 0.5 + cos(phase + Float(i) * 1.4) * r
                     let cy = 0.5 + sin(phase * 0.9 + Float(i) * 1.1) * r
-                    addStar(x: cx, y: cy, hue: Float(i) / 4, now: now,
+                    let h = cfg.randomizeHue ? Float(i) / 4 : cfg.baseHue
+                    addStar(x: cx, y: cy, hue: h, now: now,
                             energy: 1.0 + (inputs.audio.onset ? 1.5 : 0))
                 }
             }
+        }
+
+        // — Lifespan-based purge: stars older than `cfg.starLifespan` get
+        //   their birth time pushed past the shader's age limit so they
+        //   stop drawing immediately when the slider tightens.
+        let cutoff = now - cfg.starLifespan
+        for i in 0..<stars.count where stars[i].posBirthHue.z > -100 && stars[i].posBirthHue.z < cutoff {
+            stars[i].posBirthHue.z = -1000
         }
 
         // Upload buffer.
@@ -93,7 +105,8 @@ final class MocapConstellationVisualizer: Visualizer {
         var u = MCUniforms(
             ctrl: SIMD4<Float>(now, Float(Self.starCapacity),
                                Float(view.drawableSize.width / max(1, view.drawableSize.height)), 0),
-            audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb)
+            audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
+            visual: SIMD4<Float>(cfg.starCoreSize, cfg.ringGrowth, cfg.ringWidth, cfg.audioCoupling)
         )
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBuffer(starBuffer, offset: 0, index: 0)

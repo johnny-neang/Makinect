@@ -11,7 +11,7 @@ import simd
 
 @MainActor
 final class StrandVeilVisualizer: Visualizer {
-    private static let strandCount = 8000
+    private static let maxStrandCount = 16000
     private static let segmentsPerStrand = 24
     private static var verticesPerStrand: Int { segmentsPerStrand * 2 }
 
@@ -23,7 +23,8 @@ final class StrandVeilVisualizer: Visualizer {
     private struct SVUniforms {
         var ctrl: SIMD4<Float>     // (time, count, segments, _)
         var audio: SIMD4<Float>    // (rms, onset, bassLow, treb)
-        var aspectFlow: SIMD4<Float>  // (aspect, flowScale, gravity, _)
+        var aspectFlow: SIMD4<Float>  // (aspect, flowScale, gravity, audioCoupling)
+        var style: SIMD4<Float>    // (baseHue, hueSpread, strandLength, _)
     }
 
     private let initPSO: MTLComputePipelineState
@@ -52,7 +53,7 @@ final class StrandVeilVisualizer: Visualizer {
         dr.colorAttachments[0].destinationAlphaBlendFactor = .one
         guard let drawPSO = try? device.makeRenderPipelineState(descriptor: dr) else { return nil }
 
-        let bytes = MemoryLayout<StrandHead>.stride * Self.strandCount
+        let bytes = MemoryLayout<StrandHead>.stride * Self.maxStrandCount
         guard let a = device.makeBuffer(length: bytes, options: [.storageModePrivate]),
               let b = device.makeBuffer(length: bytes, options: [.storageModePrivate]) else { return nil }
 
@@ -67,23 +68,32 @@ final class StrandVeilVisualizer: Visualizer {
         let bands = inputs.audio.bands
         let bassLow = bands.indices.contains(0) ? bands[0] : 0
         let treb = (bands.indices.contains(6) ? bands[6] : 0) + (bands.indices.contains(7) ? bands[7] : 0)
+        let cfg = inputs.strandVeil
+        let count = max(500, min(Self.maxStrandCount, cfg.strandCount))
 
         var u = SVUniforms(
-            ctrl: SIMD4<Float>(inputs.timeSeconds, Float(Self.strandCount), Float(Self.segmentsPerStrand), 0),
+            ctrl: SIMD4<Float>(inputs.timeSeconds, Float(count), Float(Self.segmentsPerStrand), 0),
             audio: SIMD4<Float>(inputs.audio.rms, inputs.audio.onset ? 1 : 0, bassLow, treb),
             aspectFlow: SIMD4<Float>(
                 Float(view.drawableSize.width / max(1, view.drawableSize.height)),
-                0.6 + bassLow * 0.8, 0.4, 0
-            )
+                cfg.flowScale + bassLow * cfg.flowAudioMod,
+                cfg.gravity,
+                cfg.audioCoupling
+            ),
+            style: SIMD4<Float>(cfg.baseHue, cfg.hueSpread, cfg.strandLength, 0)
         )
         var range = SIMD2<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM)
 
         if !initialized, let buf = inputs.textures.commandQueue.makeCommandBuffer(),
            let enc = buf.makeComputeCommandEncoder() {
+            // Init the full max buffer once so changing strandCount doesn't
+            // surface uninitialized memory at the new tail.
+            var initU = u
+            initU.ctrl.y = Float(Self.maxStrandCount)
             enc.setComputePipelineState(initPSO)
             enc.setBuffer(headsA, offset: 0, index: 0)
-            enc.setBytes(&u, length: MemoryLayout<SVUniforms>.stride, index: 1)
-            dispatch1D(enc: enc, pso: initPSO, count: Self.strandCount)
+            enc.setBytes(&initU, length: MemoryLayout<SVUniforms>.stride, index: 1)
+            dispatch1D(enc: enc, pso: initPSO, count: Self.maxStrandCount)
             enc.endEncoding()
             buf.commit()
             buf.waitUntilCompleted()
@@ -98,7 +108,7 @@ final class StrandVeilVisualizer: Visualizer {
             enc.setTexture(inputs.textures.registeredDepthTexture, index: 0)
             enc.setBytes(&u, length: MemoryLayout<SVUniforms>.stride, index: 2)
             enc.setBytes(&range, length: MemoryLayout<SIMD2<Float>>.stride, index: 3)
-            dispatch1D(enc: enc, pso: stepPSO, count: Self.strandCount)
+            dispatch1D(enc: enc, pso: stepPSO, count: count)
             enc.endEncoding()
             buf.commit()
             buf.waitUntilCompleted()
@@ -108,12 +118,11 @@ final class StrandVeilVisualizer: Visualizer {
         encoder.setRenderPipelineState(drawPSO)
         encoder.setVertexBuffer(headsA, offset: 0, index: 0)
         encoder.setVertexBytes(&u, length: MemoryLayout<SVUniforms>.stride, index: 1)
-        // Each strand is rendered as a strip of (segmentsPerStrand) line segments.
         encoder.drawPrimitives(
             type: .lineStrip,
             vertexStart: 0,
             vertexCount: Self.segmentsPerStrand,
-            instanceCount: Self.strandCount
+            instanceCount: count
         )
     }
 

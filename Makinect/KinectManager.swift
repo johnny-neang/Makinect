@@ -112,6 +112,9 @@ final class KinectManager {
     let mercuryStorm = MercuryStormConfig()
     let mandelbulbAviary = MandelbulbAviaryConfig()
     let bodyOfPetals = BodyOfPetalsConfig()
+    let mocapConstellation = MocapConstellationConfig()
+    let sandMandala = SandMandalaConfig()
+    let strandVeil = StrandVeilConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {
