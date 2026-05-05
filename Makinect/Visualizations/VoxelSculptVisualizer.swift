@@ -26,6 +26,7 @@ final class VoxelSculptVisualizer: Visualizer {
         var ctrl: SIMD4<Float>     // (time, rms, onset, voxelScale)
         var range: SIMD4<Float>    // (nearMM, farMM, gridX, gridY)
         var cameraExplode: SIMD4<Float>  // (camY, explodePulse, _, _)
+        var style: SIMD4<Float>    // (baseHue, hueSpread, saturation, audioCoupling)
     }
 
     private let pipeline: MTLRenderPipelineState
@@ -84,10 +85,16 @@ final class VoxelSculptVisualizer: Visualizer {
                 bands.indices.contains(7) ? bands[7] : 0
             ),
             ctrl: SIMD4<Float>(now, inputs.audio.rms, inputs.audio.onset ? 1 : 0,
-                               0.06 + bassLow * 0.04),
+                               inputs.voxelSculpt.voxelScale + bassLow * 0.04),
             range: SIMD4<Float>(inputs.segmentationNearMM, inputs.segmentationFarMM,
                                 Float(Self.gridX), Float(Self.gridY)),
-            cameraExplode: SIMD4<Float>(camY, explodePulse, 0, 0)
+            cameraExplode: SIMD4<Float>(camY, explodePulse, 0, 0),
+            style: SIMD4<Float>(
+                inputs.voxelSculpt.baseHue,
+                inputs.voxelSculpt.hueSpread,
+                inputs.voxelSculpt.saturation,
+                inputs.voxelSculpt.audioCoupling
+            )
         )
 
         encoder.setRenderPipelineState(pipeline)

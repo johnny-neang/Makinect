@@ -10,6 +10,13 @@ import MetalKit
 
 @MainActor
 final class CathedralOfBonesVisualizer: Visualizer {
+    private struct Params {
+        /// (heartSize, heartPulse, nerveIntensity, boneTint)
+        var cfg: SIMD4<Float>
+        /// (strobeIntensity, plateWarmth, visceraGlow, boneThickness)
+        var misc: SIMD4<Float>
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -35,9 +42,16 @@ final class CathedralOfBonesVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.cathedralOfBones
+        var params = Params(
+            cfg: SIMD4<Float>(cfg.heartSize, cfg.heartPulse, cfg.nerveIntensity, cfg.boneTint),
+            misc: SIMD4<Float>(cfg.strobeIntensity, cfg.plateWarmth, cfg.visceraGlow, cfg.boneThickness)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 0)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

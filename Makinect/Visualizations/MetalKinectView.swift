@@ -256,7 +256,12 @@ struct MetalKinectView: NSViewRepresentable {
                 liquidLightCalligraphy: manager.liquidLightCalligraphy,
                 pixelStorm: manager.pixelStorm,
                 glitchMosaic: manager.glitchMosaic,
-                impastoPainter: manager.impastoPainter
+                impastoPainter: manager.impastoPainter,
+                pointCloud: manager.pointCloud,
+                voxelSculpt: manager.voxelSculpt,
+                kineticWireframe: manager.kineticWireframe,
+                bodyPaint: manager.bodyPaint,
+                cathedralOfBones: manager.cathedralOfBones
             )
 
             viz.draw(in: view, encoder: offEncoder, inputs: inputs)

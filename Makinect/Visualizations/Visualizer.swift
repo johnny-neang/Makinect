@@ -42,6 +42,11 @@ struct VisualizerInputs {
     let pixelStorm: PixelStormConfig
     let glitchMosaic: GlitchMosaicConfig
     let impastoPainter: ImpastoPainterConfig
+    let pointCloud: PointCloudConfig
+    let voxelSculpt: VoxelSculptConfig
+    let kineticWireframe: KineticWireframeConfig
+    let bodyPaint: BodyPaintConfig
+    let cathedralOfBones: CathedralOfBonesConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

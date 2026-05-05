@@ -128,6 +128,11 @@ final class KinectManager {
     let pixelStorm = PixelStormConfig()
     let glitchMosaic = GlitchMosaicConfig()
     let impastoPainter = ImpastoPainterConfig()
+    let pointCloud = PointCloudConfig()
+    let voxelSculpt = VoxelSculptConfig()
+    let kineticWireframe = KineticWireframeConfig()
+    let bodyPaint = BodyPaintConfig()
+    let cathedralOfBones = CathedralOfBonesConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

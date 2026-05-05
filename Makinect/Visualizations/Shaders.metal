@@ -139,8 +139,9 @@ struct PointCloudUniforms {
     float4 bandsHigh;      // bands[4..7]
     float4 intrinsics;     // (fx, fy, cx, cy)
     float4 dims;           // (depthW, depthH, _, _)
+    float4 style;          // (baseHue, hueGradient, bassDisplacement, saturation)
 };
-// Total 144 bytes, all 16-aligned.
+// Total 160 bytes, all 16-aligned.
 
 struct PointVertexOut {
     float4 position [[position]];
@@ -187,11 +188,11 @@ vertex PointVertexOut pointcloud_vs(
     float xm = (float(x) - cx) * zm / fx;
     float ym = (float(y) - cy) * zm / fy;
 
-    // Audio displacement
+    // Audio displacement (strength user-controlled).
     float bass = u.bandsLow.x + u.bandsLow.y;
     float pulse = rms * 0.3 + onset * 0.4;
     float ang = atan2(ym, xm);
-    float radial = sin(ang * 6.0 + time * 2.0) * 0.05 * (bass + pulse);
+    float radial = sin(ang * 6.0 + time * 2.0) * u.style.z * (bass + pulse);
     xm += cos(ang) * radial;
     ym += sin(ang) * radial;
 
@@ -200,7 +201,9 @@ vertex PointVertexOut pointcloud_vs(
     out.pointSize = pointSize * (1.0 + pulse * 1.5);
 
     float depthN = saturate((zm - 0.5) / 4.0);
-    float3 col = hsv2rgb(float3(0.6 - depthN * 0.5 + u.bandsLow.w * 0.1, 0.85, 0.7 + pulse * 0.3));
+    // Hue: baseHue + gradient×depth user-controlled.
+    float hue = u.style.x + depthN * u.style.y + u.bandsLow.w * 0.1;
+    float3 col = hsv2rgb(float3(fract(hue), u.style.w, 0.7 + pulse * 0.3));
     out.color = col;
     return out;
 }
@@ -239,11 +242,17 @@ struct PaintVertexOut {
     float intensity;
 };
 
+struct PaintParams {
+    float4 cfg;   // (beatBoost, audioCoupling, hueOffset, saturation)
+    float4 misc;  // (falloff, trail, _, _)
+};
+
 vertex PaintVertexOut paint_vs(
     uint vid [[vertex_id]],
     uint iid [[instance_id]],
     constant PaintInstance *instances [[buffer(0)]],
-    constant PaintUniforms &u [[buffer(1)]]
+    constant PaintUniforms &u [[buffer(1)]],
+    constant PaintParams &p [[buffer(2)]]
 ) {
     float2 quad[6] = {
         float2(-1, -1), float2( 1, -1), float2(-1, 1),
@@ -252,7 +261,7 @@ vertex PaintVertexOut paint_vs(
     float2 q = quad[vid];
     PaintInstance inst = instances[iid];
 
-    float beat = 1.0 + u.onset * 1.2 + u.rms * 0.5;
+    float beat = 1.0 + u.onset * p.cfg.x + u.rms * 0.5;
     float2 size = float2(inst.size) * beat;
     size.x /= u.aspect;
 
@@ -262,18 +271,24 @@ vertex PaintVertexOut paint_vs(
     PaintVertexOut out;
     out.position = float4(ndc, 0, 1);
     out.localUV = q;
-    float h = fmod(inst.jointID * 0.12, 1.0);
-    out.color = hsv2rgb(float3(h, 0.9, 1.0));
+    float h = fmod(inst.jointID * 0.12 + p.cfg.z, 1.0);
+    out.color = hsv2rgb(float3(h, p.cfg.w, 1.0));
     out.intensity = inst.intensity;
     return out;
 }
 
-fragment float4 paint_fs(PaintVertexOut in [[stage_in]], constant PaintUniforms &u [[buffer(1)]]) {
+fragment float4 paint_fs(
+    PaintVertexOut in [[stage_in]],
+    constant PaintUniforms &u [[buffer(1)]],
+    constant PaintParams &p [[buffer(2)]]
+) {
     float r = length(in.localUV);
-    float falloff = smoothstep(1.0, 0.2, r);
+    float falloffExp = max(0.05, p.misc.x);
+    float falloff = smoothstep(1.0, max(0.05, 0.2 / falloffExp), r);
     float flicker = 0.7 + 0.3 * fract(sin(u.time * 30.0 + in.localUV.x * 13.0) * 43758.5);
     float3 col = in.color * flicker * (1.0 + u.bands[5] * 1.2);
-    return float4(col * falloff * in.intensity, falloff * in.intensity * 0.8);
+    float trail = clamp(p.misc.y, 0.1, 4.0);
+    return float4(col * falloff * in.intensity, falloff * in.intensity * 0.8 * trail);
 }
 
 // MARK: - Synthetic Frame Source
@@ -958,6 +973,7 @@ struct VSUniforms {
     float4 ctrl;            // (time, rms, onset, voxelScale)
     float4 range;           // (nearMM, farMM, gridX, gridY)
     float4 cameraExplode;   // (camY, explodePulse, _, _)
+    float4 style;           // (baseHue, hueSpread, saturation, audioCoupling)
 };
 
 struct VSVertexOut {
@@ -1044,9 +1060,9 @@ vertex VSVertexOut voxel_sculpt_vs(
     out.worldNormal = cubeNorm[vid / 6];
     out.worldPos = vp;
 
-    // Color: hue from height + bass shift, saturation full.
-    float hue = fract(0.55 + (wy + 0.2) * 0.15 + u.bandsLow.x * 0.3 + u.ctrl.x * 0.02);
-    out.baseColor = hsv2rgb(float3(hue, 0.85, 1.0));
+    // Color: hue from height + bass shift, with user palette controls.
+    float hue = fract(u.style.x + (wy + 0.2) * u.style.y + u.bandsLow.x * u.style.w + u.ctrl.x * 0.02);
+    out.baseColor = hsv2rgb(float3(hue, u.style.z, 1.0));
     out.intensity = 1.0;
     return out;
 }
@@ -1199,10 +1215,16 @@ fragment float4 plumage_fs(
 // on onset. Wet-plate collodion palette: warm blacks, silver-gray bones, glowing
 // visceral red where the heart sits.
 
+struct BonesParams {
+    float4 cfg;   // (heartSize, heartPulse, nerveIntensity, boneTint)
+    float4 misc;  // (strobeIntensity, plateWarmth, visceraGlow, boneThickness)
+};
+
 fragment float4 cathedral_bones_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant BonesParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -1216,8 +1238,12 @@ fragment float4 cathedral_bones_fs(
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    // Wet-plate background: warm-black with silver grain
-    float3 bg = mix(float3(0.010, 0.012, 0.020), float3(0.025, 0.020, 0.018), uv.y);
+    // Wet-plate background: warm-black with silver grain.
+    // plateWarmth (p.misc.y) lerps between cool film and warm collodion.
+    float warmth = p.misc.y;
+    float3 coolBg = mix(float3(0.012, 0.015, 0.026), float3(0.020, 0.022, 0.026), uv.y);
+    float3 warmBg = mix(float3(0.010, 0.012, 0.020), float3(0.025, 0.020, 0.018), uv.y);
+    float3 bg = mix(coolBg, warmBg, warmth);
     float grain = (hash21(uv * 4096.0 + t * 30.0) - 0.5) * 0.020;
     bg += grain;
     bg *= smoothstep(1.5, 0.4, length((uv - 0.5) * 1.4));
@@ -1248,12 +1274,15 @@ fragment float4 cathedral_bones_fs(
     float silver = 0.0;
     float3 viscera = float3(0);
 
+    // boneThickness (p.misc.w) scales line thickness for every bone.
+    float thick = max(0.4, p.misc.w);
+
     // — Region 0..0.18: skull (dome shape outline)
     if (regionT < 0.20) {
         float skullR = 0.06;
         float2 skullCenter = float2(0.5, bodyTop + skullR);
         float skullDist = abs(length(uv - skullCenter) - skullR);
-        silver = max(silver, 1.0 - smoothstep(0.0008, 0.005, skullDist));
+        silver = max(silver, 1.0 - smoothstep(0.0008 * thick, 0.005 * thick, skullDist));
         // Eye sockets
         float2 eyeL = skullCenter + float2(-0.018, 0.012);
         float2 eyeR = skullCenter + float2( 0.018, 0.012);
@@ -1265,7 +1294,7 @@ fragment float4 cathedral_bones_fs(
     if (regionT > 0.18 && regionT < 0.62) {
         // Spine: vertical line at body center
         float spineDist = abs(uv.x - 0.5);
-        silver = max(silver, 1.0 - smoothstep(0.0030, 0.0090, spineDist));
+        silver = max(silver, 1.0 - smoothstep(0.0030 * thick, 0.0090 * thick, spineDist));
 
         // Ribs: 7 pairs curving outward from spine
         for (int i = 0; i < 7; i++) {
@@ -1274,20 +1303,24 @@ fragment float4 cathedral_bones_fs(
             // Curve: rib follows arc
             float ribX = 0.5 + sin((uv.y - ribY) * 4.0) * 0.005;
             float ribCurveDist = abs(uv.x - ribX);
-            float ribStrength = (1.0 - smoothstep(0.001, 0.004, ribDistY))
+            float ribStrength = (1.0 - smoothstep(0.001 * thick, 0.004 * thick, ribDistY))
                               * (1.0 - smoothstep(0.05, 0.10, ribCurveDist));
             silver = max(silver, ribStrength);
         }
 
-        // Heart: glowing red blob at chest
+        // Heart: glowing red blob at chest. heartSize/heartPulse user-controlled.
+        float heartBase = max(0.005, p.cfg.x);
+        float heartPulse = max(0.0, p.cfg.y);
         float2 heartC = float2(0.485, bodyTop + 0.32 * bodyH);
-        float heartR = 0.025 + bass * 0.015 + sin(t * 4.0 + bass * 8.0) * 0.005;
+        float heartR = heartBase + bass * 0.015 * heartPulse + sin(t * 4.0 + bass * 8.0) * 0.005 * heartPulse;
         float heartDist = distance(uv, heartC) / heartR;
         float heartGlow = exp(-heartDist * heartDist * 4.0);
-        viscera += float3(1.6, 0.20, 0.10) * heartGlow * (1.2 + bass * 2.0);
+        float visceraGlow = max(0.0, p.misc.z);
+        viscera += float3(1.6, 0.20, 0.10) * heartGlow * (1.2 + bass * 2.0) * visceraGlow;
 
-        // Nerve flickers on treble — random thin bright line
-        if (treb > 0.05) {
+        // Nerve flickers on treble — random thin bright line. nerveIntensity user-controlled.
+        float nerveStrength = max(0.0, p.cfg.z);
+        if (treb > 0.05 && nerveStrength > 0.001) {
             float nerveSeed = floor(t * 40.0);
             float nerveAng = hash21(float2(nerveSeed, 1.0)) * 6.28;
             float2 nerveStart = float2(0.5, bodyTop + 0.30 * bodyH);
@@ -1299,7 +1332,7 @@ fragment float4 cathedral_bones_fs(
             float ts = clamp(dot(toN, nDir) / lenSq, 0.0, 1.0);
             float2 closest = nerveStart + nDir * ts;
             float nerveDist = distance(uv, closest);
-            silver = max(silver, exp(-nerveDist * 800.0) * treb * 4.0);
+            silver = max(silver, exp(-nerveDist * 800.0) * treb * 4.0 * nerveStrength);
         }
     }
 
@@ -1315,17 +1348,22 @@ fragment float4 cathedral_bones_fs(
         float femurY = bodyTop + 0.70 * bodyH + fSlope * fSlope * 0.3;
         float femurDist = abs(uv.y - femurY);
         float legSep = abs(abs(uv.x - 0.5) - 0.04);
-        silver = max(silver, (1.0 - smoothstep(0.002, 0.006, femurDist))
+        silver = max(silver, (1.0 - smoothstep(0.002 * thick, 0.006 * thick, femurDist))
                             * (1.0 - smoothstep(0.005, 0.020, legSep)));
     }
 
-    // Compose: silver bone color + visceral red glow + audio modulation
-    float3 boneColor = float3(0.85, 0.83, 0.78);
+    // Compose: silver bone color + visceral red glow + audio modulation.
+    // boneTint (p.cfg.w) shifts hue between warm silver (0) and cool blue (1).
+    float boneTint = saturate(p.cfg.w);
+    float3 warmBone = float3(0.85, 0.83, 0.78);
+    float3 coolBone = float3(0.72, 0.78, 0.92);
+    float3 boneColor = mix(warmBone, coolBone, boneTint);
     float3 col = bg + silver * boneColor * (1.0 + u.rms * 0.4);
     col += viscera;
 
-    // Onset: full-frame strobe flash (radiograph)
-    if (u.onset > 0.5) col += float3(0.6, 0.6, 0.55) * 0.35;
+    // Onset: full-frame strobe flash (radiograph). strobeIntensity user-controlled.
+    float strobe = max(0.0, p.misc.x);
+    if (u.onset > 0.5) col += float3(0.6, 0.6, 0.55) * 0.35 * strobe;
 
     // Subtle ambient red wash inside body
     col += float3(0.08, 0.02, 0.02) * 0.5 * (1.0 + bass * 0.6);
@@ -4411,17 +4449,23 @@ inline float wireframe_line(float2 p, float2 a, float2 b, float thickness) {
     return smoothstep(thickness, 0.0, d);
 }
 
+struct WireframeParams {
+    float4 cfg;   // (lineThickness, explosionMag, baseHueShift, audioCoupling)
+    float4 misc;  // (bodyTintHue, _, _, _)
+};
+
 fragment float4 kinetic_wireframe_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant WireframeParams &cfg [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     float2 uv = in.uv;
     float t = u.time;
     float bass = u.bands[0] + u.bands[1];
 
-    // Build a 12×8 grid of jittered nodes; each node displaces away from
+    // Build a 14×9 grid of jittered nodes; each node displaces away from
     // origin on every onset and decays back exponentially.
     float3 col = float3(0.005, 0.005, 0.012);
     int gx = 14, gy = 9;
@@ -4431,7 +4475,7 @@ fragment float4 kinetic_wireframe_fs(
             float seed = fract(sin(float(gx_i) * 12.3 + float(gy_i) * 7.7) * 43758.5);
             float2 base = float2((float(gx_i) + 0.5) / float(gx),
                                  (float(gy_i) + 0.5) / float(gy));
-            float2 explode = (base - 0.5) * (0.04 + u.onset * 0.16) * (0.4 + bass);
+            float2 explode = (base - 0.5) * (0.04 + u.onset * cfg.cfg.y) * (0.4 + bass * cfg.cfg.w);
             // Reset on time mod.
             float decay = exp(-fract(t * 0.4 + seed) * 2.0);
             float2 a = base + explode * decay
@@ -4445,12 +4489,12 @@ fragment float4 kinetic_wireframe_fs(
                 float seed2 = fract(sin(float(nx) * 12.3 + float(ny) * 7.7) * 43758.5);
                 float2 b = float2((float(nx) + 0.5) / float(gx),
                                   (float(ny) + 0.5) / float(gy));
-                float2 explode2 = (b - 0.5) * (0.04 + u.onset * 0.16) * (0.4 + bass);
+                float2 explode2 = (b - 0.5) * (0.04 + u.onset * cfg.cfg.y) * (0.4 + bass * cfg.cfg.w);
                 float decay2 = exp(-fract(t * 0.4 + seed2) * 2.0);
                 b = b + explode2 * decay2
                       + float2(sin(t + seed2 * 6.0), cos(t + seed2 * 7.0)) * 0.006;
 
-                float thickness = 0.0014 + bass * 0.0014;
+                float thickness = cfg.cfg.x + bass * 0.0014;
                 float line = wireframe_line(uv, a, b, thickness);
                 if (line < 0.01) continue;
 
@@ -4461,8 +4505,8 @@ fragment float4 kinetic_wireframe_fs(
                 bool inBody = mm > u.nearMM && mm < u.farMM && mm > 0;
 
                 float3 baseCol = inBody
-                    ? float3(1.0, 0.85, 0.55)
-                    : iq_palette(t * 0.05 + length(mid - 0.5),
+                    ? hsv2rgb(float3(cfg.misc.x, 0.55, 1.0))
+                    : iq_palette(t * 0.05 + cfg.cfg.z + length(mid - 0.5),
                                  float3(0.5, 0.5, 0.6),
                                  float3(0.5, 0.5, 0.5),
                                  float3(1.0, 1.0, 1.0),

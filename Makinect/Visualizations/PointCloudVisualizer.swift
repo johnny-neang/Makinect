@@ -11,8 +11,9 @@ private struct PointCloudUniforms {
     var bandsHigh: SIMD4<Float> = .zero                  // bands[4..7]
     var intrinsics: SIMD4<Float> = SIMD4(365.5, 365.5, 260.0, 209.0)
     var dims: SIMD4<Float> = SIMD4(256, 212, 0, 0)       // (depthW, depthH, _, _)
+    var style: SIMD4<Float> = .zero                      // (baseHue, hueGradient, bassDisplacement, saturation)
 }
-// Total 144 bytes, 16-aligned.
+// Total 160 bytes, 16-aligned.
 
 @MainActor
 final class PointCloudVisualizer: Visualizer {
@@ -73,7 +74,8 @@ final class PointCloudVisualizer: Visualizer {
         var u = PointCloudUniforms()
         let aspect = Float(view.drawableSize.width / max(1, view.drawableSize.height))
         u.viewProj = makeViewProj(aspect: aspect)
-        let pointSize = 3.5 + Float(view.drawableSize.height) / 1080.0 * 1.5
+        let cfg = inputs.pointCloud
+        let pointSize = cfg.pointSize + Float(view.drawableSize.height) / 1080.0 * 1.5
         u.timing = SIMD4(
             inputs.timeSeconds,
             pointSize,
@@ -81,6 +83,7 @@ final class PointCloudVisualizer: Visualizer {
             inputs.audio.onset ? 1 : 0
         )
         u.dims = SIMD4(Float(pointGridW), Float(pointGridH), 0, 0)
+        u.style = SIMD4(cfg.baseHue, cfg.hueGradient, cfg.bassDisplacement, cfg.saturation)
         let b = inputs.audio.bands
         if b.count >= 8 {
             u.bandsLow = SIMD4(b[0], b[1], b[2], b[3])

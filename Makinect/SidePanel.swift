@@ -278,6 +278,130 @@ struct SidePanel: View {
         if manager.visualization == .impastoPainter {
             impastoPainterSection
         }
+        if manager.visualization == .pointCloud {
+            pointCloudSection
+        }
+        if manager.visualization == .voxelSculpt {
+            voxelSculptSection
+        }
+        if manager.visualization == .kineticWireframe {
+            kineticWireframeSection
+        }
+        if manager.visualization == .bodyPaint {
+            bodyPaintSection
+        }
+        if manager.visualization == .cathedralOfBones {
+            cathedralOfBonesSection
+        }
+    }
+
+    @ViewBuilder
+    private var pointCloudSection: some View {
+        let cfg = manager.pointCloud
+        GroupBox("Point Cloud") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Point Size", value: String(format: "%.2f", cfg.pointSize)).font(.caption)
+                Slider(value: Bindable(cfg).pointSize, in: 1...10)
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue)).font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+                LabeledContent("Hue Gradient", value: String(format: "%+.2f", cfg.hueGradient)).font(.caption)
+                Slider(value: Bindable(cfg).hueGradient, in: -1...1)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+                LabeledContent("Bass Displace", value: String(format: "%.3f", cfg.bassDisplacement)).font(.caption)
+                Slider(value: Bindable(cfg).bassDisplacement, in: 0...0.30)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var voxelSculptSection: some View {
+        let cfg = manager.voxelSculpt
+        GroupBox("Voxel Sculpt") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Voxel Scale", value: String(format: "%.3f", cfg.voxelScale)).font(.caption)
+                Slider(value: Bindable(cfg).voxelScale, in: 0.01...0.20)
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue)).font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+                LabeledContent("Hue Spread", value: String(format: "%.2f", cfg.hueSpread)).font(.caption)
+                Slider(value: Bindable(cfg).hueSpread, in: 0...1)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling)).font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var kineticWireframeSection: some View {
+        let cfg = manager.kineticWireframe
+        GroupBox("Kinetic Wireframe") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Line Thickness", value: String(format: "%.4f", cfg.lineThickness)).font(.caption)
+                Slider(value: Bindable(cfg).lineThickness, in: 0.0005...0.0050)
+                LabeledContent("Explosion", value: String(format: "%.2f", cfg.explosionMagnitude)).font(.caption)
+                Slider(value: Bindable(cfg).explosionMagnitude, in: 0...0.6)
+                LabeledContent("Base Hue", value: String(format: "%+.2f", cfg.baseHueShift)).font(.caption)
+                Slider(value: Bindable(cfg).baseHueShift, in: -0.5...0.5)
+                LabeledContent("Body Tint Hue", value: String(format: "%.2f", cfg.bodyTintHue)).font(.caption)
+                Slider(value: Bindable(cfg).bodyTintHue, in: 0...1)
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling)).font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bodyPaintSection: some View {
+        let cfg = manager.bodyPaint
+        GroupBox("Body Paint") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Joint Size", value: String(format: "%.3f", cfg.jointSize)).font(.caption)
+                Slider(value: Bindable(cfg).jointSize, in: 0.01...0.20)
+                LabeledContent("Head Size", value: String(format: "%.3f", cfg.headSize)).font(.caption)
+                Slider(value: Bindable(cfg).headSize, in: 0.02...0.30)
+                LabeledContent("Beat Boost", value: String(format: "%.2f", cfg.beatBoost)).font(.caption)
+                Slider(value: Bindable(cfg).beatBoost, in: 0...3)
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling)).font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...8)
+                LabeledContent("Hue Offset", value: String(format: "%+.2f", cfg.hueOffset)).font(.caption)
+                Slider(value: Bindable(cfg).hueOffset, in: -0.5...0.5)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+                LabeledContent("Falloff", value: String(format: "%.2f", cfg.falloff)).font(.caption)
+                Slider(value: Bindable(cfg).falloff, in: 0.3...3)
+                LabeledContent("Trail", value: String(format: "%.2f", cfg.trail)).font(.caption)
+                Slider(value: Bindable(cfg).trail, in: 0.1...3)
+                LabeledContent("Smoothing", value: String(format: "%.2f", cfg.smoothing)).font(.caption)
+                Slider(value: Bindable(cfg).smoothing, in: 0.05...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cathedralOfBonesSection: some View {
+        let cfg = manager.cathedralOfBones
+        GroupBox("Cathedral of Bones") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Heart Size", value: String(format: "%.3f", cfg.heartSize)).font(.caption)
+                Slider(value: Bindable(cfg).heartSize, in: 0.005...0.080)
+                LabeledContent("Heart Pulse", value: String(format: "%.2f", cfg.heartPulse)).font(.caption)
+                Slider(value: Bindable(cfg).heartPulse, in: 0...3)
+                LabeledContent("Nerve", value: String(format: "%.2f", cfg.nerveIntensity)).font(.caption)
+                Slider(value: Bindable(cfg).nerveIntensity, in: 0...3)
+                LabeledContent("Bone Tint", value: String(format: "%.2f", cfg.boneTint)).font(.caption)
+                Slider(value: Bindable(cfg).boneTint, in: 0...1)
+                LabeledContent("Strobe", value: String(format: "%.2f", cfg.strobeIntensity)).font(.caption)
+                Slider(value: Bindable(cfg).strobeIntensity, in: 0...3)
+                LabeledContent("Plate Warmth", value: String(format: "%.2f", cfg.plateWarmth)).font(.caption)
+                Slider(value: Bindable(cfg).plateWarmth, in: 0...1)
+                LabeledContent("Viscera Glow", value: String(format: "%.2f", cfg.visceraGlow)).font(.caption)
+                Slider(value: Bindable(cfg).visceraGlow, in: 0...3)
+                LabeledContent("Bone Thickness", value: String(format: "%.2f", cfg.boneThickness)).font(.caption)
+                Slider(value: Bindable(cfg).boneThickness, in: 0.4...3)
+            }
+        }
     }
 
     @ViewBuilder
