@@ -1,15 +1,19 @@
 // PixelStormVisualizer — Vertical sort cascades behind the body silhouette.
-// Each column is sorted by luminance with thresholds modulated per audio band;
-// streamers fall at bass-driven speeds; onset triggers a horizontal "wave" of
-// pure white that rolls down the screen. The body itself stays pristine — sort
-// happens only in negative space. Inspiration: Onformative's *Meandering River*,
-// Kim Asendorf's pixel sort, Glitch Art canon.
+//
+// User controls (PixelStormConfig): sample count + fall speed + threshold +
+// body protect + hue tint.
 
 import Metal
 import MetalKit
+import simd
 
 @MainActor
 final class PixelStormVisualizer: Visualizer {
+    private struct Params {
+        var cfg: SIMD4<Float>     // (sampleCount, fallSpeed, thresholdOffset, bodyProtect)
+        var misc: SIMD4<Float>    // (hueTint, _, _, _)
+    }
+
     private let pipeline: MTLRenderPipelineState
 
     required init?(device: MTLDevice, library: MTLLibrary, colorPixelFormat: MTLPixelFormat) {
@@ -35,10 +39,18 @@ final class PixelStormVisualizer: Visualizer {
             u.bands = (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
         }
 
+        let cfg = inputs.pixelStorm
+        var params = Params(
+            cfg:  SIMD4<Float>(Float(cfg.sampleCount), cfg.fallSpeed,
+                               cfg.thresholdOffset, cfg.bodyProtect),
+            misc: SIMD4<Float>(cfg.hueTint, 0, 0, 0)
+        )
+
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentTexture(inputs.textures.colorTexture, index: 0)
         encoder.setFragmentTexture(inputs.textures.registeredDepthTexture, index: 1)
         encoder.setFragmentBytes(&u, length: MemoryLayout<DepthLavaUniforms>.size, index: 0)
+        encoder.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
     }
 }

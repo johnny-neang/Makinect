@@ -253,7 +253,10 @@ struct MetalKinectView: NSViewRepresentable {
                 stableFluids: manager.stableFluids,
                 dissipativeCells: manager.dissipativeCells,
                 opticalFlow: manager.opticalFlow,
-                liquidLightCalligraphy: manager.liquidLightCalligraphy
+                liquidLightCalligraphy: manager.liquidLightCalligraphy,
+                pixelStorm: manager.pixelStorm,
+                glitchMosaic: manager.glitchMosaic,
+                impastoPainter: manager.impastoPainter
             )
 
             viz.draw(in: view, encoder: offEncoder, inputs: inputs)

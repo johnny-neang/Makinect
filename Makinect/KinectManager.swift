@@ -125,6 +125,9 @@ final class KinectManager {
     let dissipativeCells = DissipativeCellsConfig()
     let opticalFlow = OpticalFlowConfig()
     let liquidLightCalligraphy = LiquidLightCalligraphyConfig()
+    let pixelStorm = PixelStormConfig()
+    let glitchMosaic = GlitchMosaicConfig()
+    let impastoPainter = ImpastoPainterConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

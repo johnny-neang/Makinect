@@ -269,6 +269,80 @@ struct SidePanel: View {
         if manager.visualization == .liquidLightCalligraphy {
             liquidLightCalligraphySection
         }
+        if manager.visualization == .pixelStorm {
+            pixelStormSection
+        }
+        if manager.visualization == .glitchMosaic {
+            glitchMosaicSection
+        }
+        if manager.visualization == .impastoPainter {
+            impastoPainterSection
+        }
+    }
+
+    @ViewBuilder
+    private var pixelStormSection: some View {
+        let cfg = manager.pixelStorm
+        GroupBox("Pixel Storm") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Samples", value: "\(cfg.sampleCount)").font(.caption)
+                Slider(
+                    value: Binding(get: { Double(cfg.sampleCount) },
+                                   set: { cfg.sampleCount = Int($0) }),
+                    in: 4...16, step: 1
+                )
+                LabeledContent("Fall Speed", value: String(format: "%.2f", cfg.fallSpeed)).font(.caption)
+                Slider(value: Bindable(cfg).fallSpeed, in: 0...3)
+                LabeledContent("Threshold", value: String(format: "%+.2f", cfg.thresholdOffset)).font(.caption)
+                Slider(value: Bindable(cfg).thresholdOffset, in: -0.3...0.3)
+                LabeledContent("Body Protect", value: String(format: "%.2f", cfg.bodyProtect)).font(.caption)
+                Slider(value: Bindable(cfg).bodyProtect, in: 0...1)
+                LabeledContent("Hue Tint", value: String(format: "%.2f", cfg.hueTint)).font(.caption)
+                Slider(value: Bindable(cfg).hueTint, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var glitchMosaicSection: some View {
+        let cfg = manager.glitchMosaic
+        GroupBox("Glitch Mosaic") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Tile Size", value: String(format: "%.3f", cfg.tileSize)).font(.caption)
+                Slider(value: Bindable(cfg).tileSize, in: 0.005...0.060)
+                LabeledContent("Bass Pump", value: String(format: "%.3f", cfg.bassPump)).font(.caption)
+                Slider(value: Bindable(cfg).bassPump, in: 0...0.06)
+                LabeledContent("Glitch Prob", value: String(format: "%.2f", cfg.glitchProbability)).font(.caption)
+                Slider(value: Bindable(cfg).glitchProbability, in: 0.50...0.99)
+                LabeledContent("RGB Sep", value: String(format: "%.4f", cfg.rgbSeparation)).font(.caption)
+                Slider(value: Bindable(cfg).rgbSeparation, in: 0...0.020)
+                LabeledContent("Rim", value: String(format: "%.2f", cfg.rimIntensity)).font(.caption)
+                Slider(value: Bindable(cfg).rimIntensity, in: 0...1)
+                LabeledContent("Onset Strobe", value: String(format: "%.2f", cfg.onsetStrobe)).font(.caption)
+                Slider(value: Bindable(cfg).onsetStrobe, in: 0...1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var impastoPainterSection: some View {
+        let cfg = manager.impastoPainter
+        GroupBox("Impasto Painter") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Brush Freq", value: String(format: "%.0f", cfg.brushFreq)).font(.caption)
+                Slider(value: Bindable(cfg).brushFreq, in: 60...320)
+                LabeledContent("Bass Pump", value: String(format: "%.0f", cfg.bassPump)).font(.caption)
+                Slider(value: Bindable(cfg).bassPump, in: 0...160)
+                LabeledContent("Base Hue", value: String(format: "%+.2f", cfg.baseHueShift)).font(.caption)
+                Slider(value: Bindable(cfg).baseHueShift, in: -0.5...0.5)
+                LabeledContent("Highlight Hue", value: String(format: "%+.2f", cfg.highlightHueShift)).font(.caption)
+                Slider(value: Bindable(cfg).highlightHueShift, in: -0.5...0.5)
+                LabeledContent("BG Desat", value: String(format: "%.2f", cfg.bgDesaturation)).font(.caption)
+                Slider(value: Bindable(cfg).bgDesaturation, in: 0...1)
+                LabeledContent("Audio →", value: String(format: "%.2f", cfg.audioCoupling)).font(.caption)
+                Slider(value: Bindable(cfg).audioCoupling, in: 0...2)
+            }
+        }
     }
 
     @ViewBuilder

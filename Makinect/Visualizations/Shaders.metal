@@ -1344,11 +1344,17 @@ fragment float4 cathedral_bones_fs(
 // thresholds modulated per-band. The body silhouette stays pristine — sort
 // happens only behind. Onset triggers a hard re-sort wave that rolls across.
 
+struct PixelStormParams {
+    float4 cfg;  // (sampleCount, fallSpeed, thresholdOffset, bodyProtect)
+    float4 misc; // (hueTint, _, _, _)
+};
+
 fragment float4 pixel_storm_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> colorTex [[texture(0)]],
     texture2d<float, access::sample> depthTex [[texture(1)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant PixelStormParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -1362,10 +1368,9 @@ fragment float4 pixel_storm_fs(
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    if (inBody) {
-        // Body stays pristine + slight chromatic bloom
+    // Body protection user-controlled (0 = body sorted too, 1 = pristine).
+    if (inBody && p.cfg.w > 0.5) {
         float3 c = colorTex.sample(s, uv).rgb;
-        // Subtle vignette so body floats
         c *= 1.0 + u.rms * 0.20;
         return float4(c, 1.0);
     }
@@ -1376,12 +1381,14 @@ fragment float4 pixel_storm_fs(
     int bandIdx = int(colSeed * 8.0);
     float bandStrength = (bandIdx >= 0 && bandIdx < 8) ? u.bands[bandIdx] : 0.0;
 
-    // Vertical "streamer" sample — read 8 vertical positions, pick one based on threshold.
-    float threshold = 0.3 - bandStrength * 1.5 + treb * 0.4;
+    // Sample count + threshold offset user-controlled.
+    int sampleCount = clamp(int(p.cfg.x), 4, 16);
+    float threshold = 0.3 - bandStrength * 1.5 + treb * 0.4 + p.cfg.z;
     float3 best = float3(0);
     float bestLum = -1.0;
-    for (int i = 0; i < 8; i++) {
-        float sy = mix(0.0, 1.0, float(i) / 7.0) + sin(t * 0.5 + colSeed * 8.0) * 0.05;
+    for (int i = 0; i < 16; i++) {
+        if (i >= sampleCount) break;
+        float sy = mix(0.0, 1.0, float(i) / float(sampleCount - 1)) + sin(t * 0.5 + colSeed * 8.0) * 0.05;
         float3 c = colorTex.sample(s, float2(uv.x, sy)).rgb;
         float lum = dot(c, float3(0.299, 0.587, 0.114));
         if (lum > bestLum && lum > threshold) {
@@ -1390,8 +1397,8 @@ fragment float4 pixel_storm_fs(
         }
     }
 
-    // Streamer fall: shift vertically over time, modulated by bass
-    float streamShift = fract(t * (0.6 + bass * 1.5) + colSeed * 0.3);
+    // Streamer fall: shift vertically over time (speed user-controlled).
+    float streamShift = fract(t * (0.6 + bass * 1.5) * p.cfg.y + colSeed * 0.3);
     float streamY = uv.y - streamShift;
     streamY = fract(streamY + 1.0);
 
@@ -1413,10 +1420,10 @@ fragment float4 pixel_storm_fs(
         col = mix(col, float3(1.0), waveMask * u.onset * 0.6);
     }
 
-    // Hue rotate based on band (per-column tint)
+    // Hue rotate based on band (per-column tint, base hue user-controlled).
     float hueShift = bandStrength * 0.5;
     float lum = dot(col, float3(0.299, 0.587, 0.114));
-    col = mix(col, hsv2rgb(float3(fract(0.6 + colSeed * 0.3 + hueShift), 0.8, lum + 0.2)), 0.4);
+    col = mix(col, hsv2rgb(float3(fract(p.misc.x + colSeed * 0.3 + hueShift), 0.8, lum + 0.2)), 0.4);
 
     // Scanlines
     col *= 0.90 + 0.10 * sin(uv.y * 1080.0 * 0.7);
@@ -4330,10 +4337,16 @@ fragment float4 velvet_petal_fs(
 // a different offset per tile, modulated by a flow field. Body region triggers
 // datamosh-style P-frame displacement.
 
+struct GlitchMosaicParams {
+    float4 cfg;   // (tileSize, bassPump, glitchProbability, rgbSeparation)
+    float4 misc;  // (rimIntensity, onsetStrobe, _, _)
+};
+
 fragment float4 glitch_mosaic_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> colorTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant GlitchMosaicParams &p [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     float2 uv = in.uv;
@@ -4341,8 +4354,8 @@ fragment float4 glitch_mosaic_fs(
     float bass = u.bands[0] + u.bands[1];
     float treb = u.bands[6] + u.bands[7];
 
-    // Tile size pulses with bass — bigger blocks on bass hits.
-    float tileSize = 0.018 + bass * 0.025;
+    // Tile size: base + bass pump (both user-controlled).
+    float tileSize = p.cfg.x + bass * p.cfg.y;
     float2 tile = floor(uv / tileSize);
     float2 inTile = fract(uv / tileSize);
 
@@ -4355,32 +4368,32 @@ fragment float4 glitch_mosaic_fs(
     float tilt2 = (seed2 - 0.5) * 0.04 + cos(t * 0.5 + seed2 * 6.28318) * 0.012;
     float2 sampleUV = uv + float2(tilt, tilt2);
 
-    // YUV channel separation per tile (datamosh feel).
-    float3 cr = colorTex.sample(s, sampleUV + float2(0.005, 0)).rgb;
+    // YUV channel separation — magnitude user-controlled.
+    float sep = p.cfg.w;
+    float3 cr = colorTex.sample(s, sampleUV + float2(sep, 0)).rgb;
     float3 cg = colorTex.sample(s, sampleUV).rgb;
-    float3 cb = colorTex.sample(s, sampleUV - float2(0.005, 0)).rgb;
+    float3 cb = colorTex.sample(s, sampleUV - float2(sep, 0)).rgb;
     float3 col = float3(cr.r, cg.g, cb.b);
 
-    // P-frame block offset on certain tiles when seed > threshold (more tiles glitch on onset).
-    float glitchProb = 0.85 - u.onset * 0.5 - bass * 0.2;
+    // P-frame block offset on certain tiles (probability user-controlled).
+    float glitchProb = p.cfg.z - u.onset * 0.5 - bass * 0.2;
     if (seed > glitchProb) {
         float2 mosh = float2(seed - 0.5, seed2 - 0.5) * 0.12;
         col = colorTex.sample(s, sampleUV + mosh).rgb;
-        // Solarize the moshed tiles.
         col = abs(col - 0.5) * 2.0;
     }
 
-    // Holographic rim per-tile.
+    // Holographic rim per-tile (intensity user-controlled).
     float rim = pow(max(abs(inTile.x - 0.5), abs(inTile.y - 0.5)) * 2.0, 8.0);
     float3 rainbow = iq_palette(seed + t * 0.1,
                                 float3(0.5, 0.5, 0.5),
                                 float3(0.5, 0.5, 0.5),
                                 float3(1.0, 1.0, 1.0),
                                 float3(0.0, 0.33, 0.67));
-    col += rainbow * rim * (0.3 + treb * 0.7);
+    col += rainbow * rim * (p.misc.x + treb * 0.7);
 
-    // Onset triggers a strobe inversion of random tiles.
-    if (u.onset > 0.5 && seed > 0.7) col = 1.0 - col;
+    // Onset strobe inversion (user-controlled strength).
+    if (u.onset > 0.5 && seed > (1.0 - p.misc.y * 0.3)) col = 1.0 - col;
 
     return float4(aces_tonemap(col), 1.0);
 }
@@ -4469,10 +4482,16 @@ fragment float4 kinetic_wireframe_fs(
 // brush direction comes from depth gradient; lighting from a simulated raked
 // light source so the paint reads as physical material.
 
+struct ImpastoParams {
+    float4 cfg;   // (brushFreq, bassPump, baseHueShift, highlightHueShift)
+    float4 misc;  // (bgDesaturation, audioCoupling, _, _)
+};
+
 fragment float4 impasto_painter_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant ImpastoParams &p_ [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
     float2 uv = in.uv;
@@ -4492,43 +4511,42 @@ fragment float4 impasto_painter_fs(
     float2 brushDir = grad / gradLen;
     if (gradLen < 1e-3) brushDir = float2(cos(t * 0.4), sin(t * 0.4));
 
-    // Generate a single brush "stripe" pattern aligned with brushDir.
+    // Brush stripe frequency user-controlled.
+    float brushFreq = p_.cfg.x + bass * p_.cfg.y;
     float2 perp = float2(-brushDir.y, brushDir.x);
     float2 q = float2(dot(p, brushDir), dot(p, perp));
-    float stripe = sin(q.y * (160.0 + bass * 80.0)) * 0.5 + 0.5;
+    float stripe = sin(q.y * brushFreq) * 0.5 + 0.5;
     stripe = pow(stripe, 1.6);
 
-    // Multi-layer brush splats (3 octaves of stripe).
     float strokes = stripe;
     strokes += sin(q.y * 240.0 + q.x * 4.0) * 0.5 + 0.5;
     strokes += sin(q.y * 380.0 - q.x * 6.0) * 0.5 + 0.5;
     strokes /= 3.0;
 
-    // Raked-light height: stroke peaks → bright edges, troughs → shadowed.
-    float dStripe = cos(q.y * (160.0 + bass * 80.0)) * (160.0 + bass * 80.0);
+    float dStripe = cos(q.y * brushFreq) * brushFreq;
     float light = saturate(0.5 + dStripe * 0.005);
 
-    // Palette: van Gogh starry-night meets bass-shifted hue.
-    float3 base = iq_palette(0.55 + bass * 0.2 + uv.x * 0.3,
+    // Palette hue shifts user-controlled.
+    float3 base = iq_palette(0.55 + p_.cfg.z + bass * 0.2 + uv.x * 0.3,
                              float3(0.4, 0.4, 0.5),
                              float3(0.5, 0.5, 0.5),
                              float3(1.0, 1.0, 1.0),
                              float3(0.0, 0.10, 0.20));
-    float3 highlight = iq_palette(0.05 + treb * 0.2,
+    float3 highlight = iq_palette(0.05 + p_.cfg.w + treb * 0.2,
                                   float3(0.95, 0.85, 0.6),
                                   float3(0.4, 0.4, 0.5),
                                   float3(1.0, 1.0, 0.8),
                                   float3(0.0, 0.20, 0.40));
 
-    float3 col = mix(base * 0.6, highlight, light * strokes) * (1.0 + u.rms * 0.6);
+    float3 col = mix(base * 0.6, highlight, light * strokes) * (1.0 + u.rms * p_.misc.y);
 
-    // Body presence → desaturate background, saturate body region.
+    // Body presence → desaturate background (strength user-controlled).
     float2 du = float2(uv.x, (uv.y * 1080.0 + 1.0) / 1082.0);
     float mm = depthTex.sample(s, du).r;
     bool inBody = mm > u.nearMM && mm < u.farMM && mm > 0;
     if (!inBody) {
         float lum = dot(col, float3(0.299, 0.587, 0.114));
-        col = mix(float3(lum), col, 0.65);
+        col = mix(float3(lum), col, 1.0 - p_.misc.x);
     }
 
     col += float3(0.3, 0.2, 0.05) * u.onset * 0.4;
