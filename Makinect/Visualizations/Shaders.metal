@@ -1936,10 +1936,17 @@ fragment float4 stained_cathedral_fs(
 // vertical "drops" — sudden descents that ripple outward; treble shimmers the
 // high-frequency sparkle layer.
 
+struct AuroraParams {
+    float4 motion;     // (fallSpeed, curtainFreq, dropMagnitude, starDensity)
+    float4 palette;    // (hueA, hueB, hueC, bodyBoost)
+    float4 misc;       // (trebleShimmer, _, _, _)
+};
+
 fragment float4 aurora_fs(
     PassthroughVertexOut in [[stage_in]],
     texture2d<float, access::sample> depthTex [[texture(0)]],
-    constant Uniforms &u [[buffer(0)]]
+    constant Uniforms &u [[buffer(0)]],
+    constant AuroraParams &cfg [[buffer(1)]]
 ) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
 
@@ -1951,24 +1958,25 @@ fragment float4 aurora_fs(
     float treb = u.bands[6] + u.bands[7];
     float t = u.time;
 
-    // Background: deep night sky with stars
+    // Background: deep night sky with stars (density user-controlled).
     float3 sky = mix(float3(0.005, 0.010, 0.025), float3(0.020, 0.012, 0.040), uv.y);
     float2 starG = floor(uv * 1000.0);
     float starH = hash21(starG);
-    float star = step(0.9985, starH) * (0.6 + sin(t * 2.0 + starH * 13.0) * 0.4);
+    float starThreshold = 1.0 - cfg.motion.w * 0.02;  // 0=no stars, 1=dense
+    float star = step(starThreshold, starH) * (0.6 + sin(t * 2.0 + starH * 13.0) * 0.4);
     sky += float3(star);
 
     // — Aurora curtain: vertically falling waves of color
     float2 curtainP = uv;
     curtainP.y *= 1.5;
-    curtainP.x += sin(curtainP.y * 8.0 + t * 0.5) * 0.05 * (1.0 + bass);
-    curtainP.y -= t * 0.08;  // slow descent
+    curtainP.x += sin(curtainP.y * cfg.motion.y + t * 0.5) * 0.05 * (1.0 + bass);
+    curtainP.y -= t * cfg.motion.x;  // user-tunable descent speed
 
     float curtain = fbm(curtainP * float2(3.0, 1.5));
     float curtain2 = fbm(curtainP * float2(8.0, 3.0) + 17.3);
 
-    // Bass "drop": sudden vertical compression
-    float dropPhase = u.onset * 1.0;
+    // Bass "drop": sudden vertical compression on onset (magnitude tunable).
+    float dropPhase = u.onset * cfg.motion.z;
     if (dropPhase > 0.001) {
         curtainP.y -= dropPhase * 0.3;
     }
@@ -1976,12 +1984,12 @@ fragment float4 aurora_fs(
     // Aurora intensity is non-uniform — sharp top edge, fading bottom
     float verticalGate = smoothstep(0.0, 0.3, uv.y) * (1.0 - smoothstep(0.5, 1.0, uv.y));
     float auroraDensity = pow(curtain, 2.0) * verticalGate;
-    auroraDensity += pow(curtain2, 4.0) * verticalGate * (0.4 + treb * 0.8);
+    auroraDensity += pow(curtain2, 4.0) * verticalGate * (0.4 + treb * cfg.misc.x);
 
-    // Multi-color aurora: green base, magenta accents, teal mid
-    float hueA = fract(0.32 + curtain2 * 0.05);   // green-ish
-    float hueB = fract(0.85 + bass * 0.05);       // magenta
-    float hueC = fract(0.50);                      // teal
+    // Multi-color aurora — three user-controlled hues.
+    float hueA = fract(cfg.palette.x + curtain2 * 0.05);
+    float hueB = fract(cfg.palette.y + bass * 0.05);
+    float hueC = fract(cfg.palette.z);
     float3 aurora = mix(
         hsv2rgb(float3(hueA, 0.65, 1.0)),
         hsv2rgb(float3(hueB, 0.85, 1.0)),
@@ -1998,14 +2006,14 @@ fragment float4 aurora_fs(
     float3 col = sky;
     col += aurora * auroraDensity * 1.6;
 
-    // Treble shimmer — high-frequency sparkle layer
-    float shimmer = pow(noise2(uv * 80.0 + t * 0.7), 8.0) * treb * 0.8;
+    // Treble shimmer — intensity user-controlled.
+    float shimmer = pow(noise2(uv * 80.0 + t * 0.7), 8.0) * treb * cfg.misc.x;
     col += float3(0.8, 0.9, 1.0) * shimmer;
 
     if (inBody) {
-        // Body pixels get aurora super-bright
-        col += aurora * 2.5;
-        // Subtle silhouette outline (rim)
+        // Body pixels get aurora super-bright (boost user-controlled).
+        col += aurora * cfg.palette.w;
+        // Subtle silhouette outline (rim) tinted with hueB.
         col += hsv2rgb(float3(hueB, 0.7, 1.0)) * 0.3;
     }
 

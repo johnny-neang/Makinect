@@ -31,6 +31,7 @@ struct VisualizerInputs {
     let strandVeil: StrandVeilConfig
     let nebula: NebulaConfig
     let smokeGod: SmokeGodConfig
+    let volumetricAurora: VolumetricAuroraConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only

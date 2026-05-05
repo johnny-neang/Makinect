@@ -245,7 +245,8 @@ struct MetalKinectView: NSViewRepresentable {
                 sandMandala: manager.sandMandala,
                 strandVeil: manager.strandVeil,
                 nebula: manager.nebula,
-                smokeGod: manager.smokeGod
+                smokeGod: manager.smokeGod,
+                volumetricAurora: manager.volumetricAurora
             )
 
             viz.draw(in: view, encoder: offEncoder, inputs: inputs)

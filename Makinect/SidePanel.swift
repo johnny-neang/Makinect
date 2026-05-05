@@ -240,6 +240,58 @@ struct SidePanel: View {
         if manager.visualization == .smokeGod {
             smokeGodSection
         }
+
+        if manager.visualization == .volumetricAurora {
+            volumetricAuroraSection
+        }
+    }
+
+    @ViewBuilder
+    private var volumetricAuroraSection: some View {
+        let cfg = manager.volumetricAurora
+        GroupBox("Aurora — Motion") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Fall Speed", value: String(format: "%.3f", cfg.fallSpeed))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).fallSpeed, in: 0...0.30)
+
+                LabeledContent("Curtain Freq", value: String(format: "%.1f", cfg.curtainFreq))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).curtainFreq, in: 4...16)
+
+                LabeledContent("Drop", value: String(format: "%.2f", cfg.dropMagnitude))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).dropMagnitude, in: 0...1)
+
+                LabeledContent("Stars", value: String(format: "%.2f", cfg.starDensity))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).starDensity, in: 0...1)
+            }
+        }
+
+        GroupBox("Aurora — Palette") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Hue A", value: String(format: "%.2f", cfg.hueA))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueA, in: 0...1)
+
+                LabeledContent("Hue B", value: String(format: "%.2f", cfg.hueB))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueB, in: 0...1)
+
+                LabeledContent("Hue C", value: String(format: "%.2f", cfg.hueC))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).hueC, in: 0...1)
+
+                LabeledContent("Body Boost", value: String(format: "%.2f", cfg.bodyBoost))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).bodyBoost, in: 0...3)
+
+                LabeledContent("Shimmer", value: String(format: "%.2f", cfg.trebleShimmer))
+                    .font(.caption)
+                Slider(value: Bindable(cfg).trebleShimmer, in: 0...2)
+            }
+        }
     }
 
     @ViewBuilder
