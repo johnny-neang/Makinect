@@ -102,15 +102,72 @@ final class MKAppState {
         }
     }
 
-    // Scene arming — armed scene becomes live on next downbeat (or click).
+    // Scene arming — armed scene becomes live on next click commit.
     var armedKind: VisualizationKind?
 
-    // Panic — flash to black for ~600ms.
-    var isPanicking: Bool = false
+    // Customizable scene bar — 8 quick-access viz. Persisted; defaults to
+    // the curated Featured 8 instead of the first 8 enum cases.
+    var sceneBar: [VisualizationKind] = MKVizCategory.featuredKinds
+
+    // Beat-grid jog — the user can click a beat cell to re-anchor the
+    // visual playhead. nowBeatIndex subtracts this from wall-clock phase.
+    var beatPhaseOffset: TimeInterval = 0
+
+    // Panic — multi-cycle flash. The phase int is driven by a Timer in
+    // firePanic(); MKPerformanceView reads it to gate Color.black opacity.
+    // Spec: 200 ms × 3 cycles ≈ 600 ms total.
+    var panicPhase: Int = 0
+    private var panicTimer: Timer?
+
     func firePanic() {
-        isPanicking = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.isPanicking = false
+        panicTimer?.invalidate()
+        var phase = 0
+        // 6 toggles × 100 ms = 3 cycles in 600 ms
+        panicTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            phase += 1
+            self.panicPhase = (phase % 2 == 1) ? 1 : 0
+            if phase >= 6 {
+                t.invalidate()
+                self.panicPhase = 0
+            }
         }
+    }
+
+    /// Convenience: any-flash for the canvas. Performance still reads
+    /// `panicPhase` (0/1) directly; this is a read-only mirror for views
+    /// that just need a boolean.
+    var isPanicking: Bool { panicPhase != 0 }
+
+    // Onboarding gate
+    var didOnboard: Bool = false
+
+    // Saved snapshots — user-named looks. Owned by MKAppState so all
+    // tabs see the same list without a separate model object.
+    var snapshots: [MKSnapshot] = []
+
+    // MARK: - Persistence bridge
+
+    /// Hydrate from a persisted payload. Best-effort: missing or unknown
+    /// VisualizationKind values silently revert to defaults.
+    func hydrate(from p: MKPersistedState) {
+        if let t = MKTab(rawValue: p.lastTab) { tab = t }
+        manualBPM = p.manualBPM
+        hasManualBPM = false       // tap evidence resets each session
+        sceneBar = p.sceneBar.compactMap { VisualizationKind(rawValue: $0) }
+        if sceneBar.count != 8 { sceneBar = MKVizCategory.featuredKinds }
+        snapshots = p.snapshots
+        didOnboard = p.didOnboard
+    }
+
+    /// Capture the parts of state we own into a fresh persisted payload,
+    /// using `existing` as a starting point so we don't clobber fields
+    /// owned by KinectManager (visualization, source, common, ranges).
+    func mergeInto(_ existing: inout MKPersistedState) {
+        existing.lastTab = tab.rawValue
+        existing.manualBPM = manualBPM
+        existing.sceneBar = sceneBar.map(\.rawValue)
+        existing.snapshots = snapshots
+        existing.didOnboard = didOnboard
     }
 }
