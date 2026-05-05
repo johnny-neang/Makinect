@@ -48,6 +48,11 @@ struct ContentView: View {
         .background(MK.Color.bgWindow)
         .preferredColorScheme(.dark)
         .frame(minWidth: 1100, minHeight: 720)
+        .overlay {
+            if !app.didOnboard {
+                MKOnboardingOverlay(manager: manager, app: app)
+            }
+        }
         .onAppear { hydrateOnce() }
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
             flushIfDirty()

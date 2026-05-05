@@ -23,14 +23,20 @@ struct MKPerformanceView: View {
                 if let viz = manager.visualization {
                     MetalKinectView(manager: manager, kind: viz)
                 } else {
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.30, green: 0.55, blue: 0.85),
-                            Color(red: 0.20, green: 0.20, blue: 0.50),
-                            Color(red: 0.02, green: 0.02, blue: 0.03)
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    )
+                    ZStack {
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.30, green: 0.55, blue: 0.85),
+                                Color(red: 0.20, green: 0.20, blue: 0.50),
+                                Color(red: 0.02, green: 0.02, blue: 0.03)
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                        // No-viz hint card — directs the user to the
+                        // Library or Synthetic source so they can get
+                        // pixels on screen without hunting in Settings.
+                        noVizHintCard
+                    }
                 }
             }
 
@@ -130,10 +136,16 @@ struct MKPerformanceView: View {
     // MARK: - Scene bar (8 slots — first 8 viz)
 
     private var sceneBar: some View {
-        let kinds = Array(VisualizationKind.allCases.prefix(8))
+        // Slots come from app.sceneBar (persisted, user-customizable via
+        // each pad's contextMenu). Falls back to the curated Featured 8
+        // if sceneBar somehow drops below 8.
+        let kinds: [VisualizationKind] = {
+            let s = app.sceneBar
+            return s.count == 8 ? s : MKVizCategory.featuredKinds
+        }()
         return MKGlass(radius: 8) {
             HStack(spacing: 4) {
-                ForEach(Array(kinds.enumerated()), id: \.element) { idx, kind in
+                ForEach(Array(kinds.enumerated()), id: \.offset) { idx, kind in
                     scenePad(idx: idx, kind: kind)
                 }
             }
@@ -363,6 +375,46 @@ struct MKPerformanceView: View {
         }
     }
 
+    // MARK: - No-viz hint card
+
+    private var noVizHintCard: some View {
+        MKGlass(radius: 10) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("No scene running")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(MK.Color.textPrimary)
+                Text("Pick a visualizer from the Library, or fire a scene from the bar above.")
+                    .font(MK.Font.label11)
+                    .foregroundStyle(MK.Color.textSecondary)
+                HStack(spacing: 8) {
+                    Button { app.tab = .library } label: {
+                        Text("⌘L  Open Library")
+                            .font(MK.Font.label11).bold()
+                            .foregroundStyle(Color(red: 0, green: 0.06, blue: 0.09))
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(MK.Color.accent))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        manager.source = .synthetic
+                        manager.visualization = .volumetricAurora
+                    } label: {
+                        Text("Use Synthetic")
+                            .font(MK.Font.label11)
+                            .foregroundStyle(MK.Color.textPrimary)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(MK.Color.hairlineStrong, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(20)
+        }
+        .frame(maxWidth: 360)
+    }
+
     // MARK: - Source picker
 
     private var sourceMenu: some View {
@@ -552,6 +604,25 @@ private struct MKScenePad: View {
             KeyEquivalent(Character(String(idx + 1))),
             modifiers: .control
         )
+        .contextMenu {
+            // Replace this slot with a different viz, organized by
+            // category. Persists via app.sceneBar → MKPersistence.
+            ForEach(MKVizCategory.allCases.filter { $0 != .featured }, id: \.self) { cat in
+                Menu(cat.label) {
+                    let categoryKinds = VisualizationKind.allCases
+                        .filter { MKVizCategory.category(for: $0) == cat }
+                    ForEach(categoryKinds, id: \.self) { k in
+                        Button(k.rawValue) {
+                            app.sceneBar[idx] = k
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Featured 8 default") {
+                app.sceneBar[idx] = MKVizCategory.featuredKinds[idx]
+            }
+        }
         .onAppear {
             withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
                 pulse.toggle()
