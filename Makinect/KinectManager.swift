@@ -145,6 +145,7 @@ final class KinectManager {
     let magneticIronFilings = MagneticIronFilingsConfig()
     let boidsMurmuration = BoidsMurmurationConfig()
     let memoryPalace = MemoryPalaceConfig()
+    let laserGeometry = LaserGeometryConfig()
 
     // Active GPU visualization (nil = use CPU CameraMode pipeline)
     var visualization: VisualizationKind? {

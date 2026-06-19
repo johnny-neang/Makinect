@@ -62,7 +62,7 @@ enum MKVizCategory: String, CaseIterable {
 
         case .stableFluids, .dissipativeCells, .opticalFlow,
              .liquidLightCalligraphy, .pixelStorm, .glitchMosaic,
-             .impastoPainter:
+             .impastoPainter, .laserBeams:
             return .optical
 
         case .bodyPaint, .bodyOfPetals, .voxelSculpt:
@@ -74,8 +74,8 @@ enum MKVizCategory: String, CaseIterable {
     }
 
     static let featuredKinds: [VisualizationKind] = [
-        .volumetricAurora, .smokeGod, .mandelbulbAviary, .plasmaSea,
-        .glassOcean, .filamentCosmology, .kineticWireframe, .nebula
+        .laserBeams, .volumetricAurora, .smokeGod, .mandelbulbAviary,
+        .plasmaSea, .glassOcean, .filamentCosmology, .kineticWireframe
     ]
 }
 

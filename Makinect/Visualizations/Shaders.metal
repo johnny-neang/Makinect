@@ -4768,3 +4768,54 @@ fragment float4 impasto_painter_fs(
 // render pipeline at the top of this file. The fragment-shader-only approach
 // could never reproduce Casberry's 3D geodesic sphere look at viable cost.)
 
+// MARK: - Laser Beams (geometric vector visualizer, Phase 1)
+//
+// Renders a tessellated SceneGraph of beams/fans/starbursts/tunnels/polygons
+// with additive blending and a razor-core + soft-halo intensity profile, to
+// reproduce the galvo-laser aesthetic on an LED/projection surface. The CPU
+// side (LaserCanvas.swift / LaserGeometryVisualizer.swift) builds the geometry;
+// this just shades it. See docs/lightshow/06-roadmap.md (Phase 1).
+
+// Layout MUST match `LaserVertex` in LaserCanvas.swift.
+struct LaserVtx {
+    float2 pos;     // clip space
+    float2 uv;      // x = across-beam (-1..1, 0 = core), y = along length (0..1)
+    float4 color;   // rgb + intensity in .w
+};
+
+struct LaserVOut {
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+};
+
+// Layout MUST match `GPUUniforms` in LaserGeometryVisualizer.swift.
+struct LaserUniforms {
+    float exposure;      // global additive gain
+    float haloSoftness;  // higher = tighter core, more razor-like
+    float pad0;
+    float pad1;
+};
+
+vertex LaserVOut laser_beam_vs(uint vid [[vertex_id]],
+                               device const LaserVtx *verts [[buffer(0)]]) {
+    LaserVtx v = verts[vid];
+    LaserVOut o;
+    o.position = float4(v.pos, 0.0, 1.0);
+    o.uv = v.uv;
+    o.color = v.color;
+    return o;
+}
+
+fragment float4 laser_beam_fs(LaserVOut in [[stage_in]],
+                              constant LaserUniforms &u [[buffer(0)]]) {
+    float d = clamp(abs(in.uv.x), 0.0, 1.0);          // 0 at core, 1 at edge
+    float core = exp(-d * d * u.haloSoftness);        // razor-thin bright core
+    float halo = exp(-d * (u.haloSoftness * 0.18));   // soft wide halo
+    float profile = core + 0.30 * halo;
+    // Soften the very ends so beams don't look chopped off.
+    float ends = smoothstep(0.0, 0.06, in.uv.y) * smoothstep(0.0, 0.06, 1.0 - in.uv.y);
+    float glow = in.color.a * profile * ends * u.exposure;
+    return float4(in.color.rgb * glow, glow);
+}
+

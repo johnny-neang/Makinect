@@ -170,6 +170,8 @@ struct MetalKinectView: NSViewRepresentable {
             case .impastoPainter:        return ImpastoPainterVisualizer(device: device, library: library, colorPixelFormat: format)
             // — Casberry-inspired parametric swarm —
             case .parametricSwarm:       return ParametricSwarmVisualizer(device: device, library: library, colorPixelFormat: format)
+            // — Phase 1 light-show: geometric vector / laser look —
+            case .laserBeams:            return LaserGeometryVisualizer(device: device, library: library, colorPixelFormat: format)
             }
         }
 
@@ -273,7 +275,8 @@ struct MetalKinectView: NSViewRepresentable {
                 velvetPetalField: manager.velvetPetalField,
                 magneticIronFilings: manager.magneticIronFilings,
                 boidsMurmuration: manager.boidsMurmuration,
-                memoryPalace: manager.memoryPalace
+                memoryPalace: manager.memoryPalace,
+                laserGeometry: manager.laserGeometry
             )
 
             viz.draw(in: view, encoder: offEncoder, inputs: inputs)

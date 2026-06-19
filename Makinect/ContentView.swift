@@ -8,6 +8,7 @@
 
 import SwiftUI
 import AppKit
+import Combine  // Timer.publish(...).autoconnect() — no longer re-exported via SwiftUI on Xcode 26+
 
 struct ContentView: View {
     @Bindable var manager: KinectManager
