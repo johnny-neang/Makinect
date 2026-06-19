@@ -226,6 +226,7 @@ struct SidePanel: View {
             }
         }
 
+        if manager.visualization == .laserBeams { laserBeamsSection }
         if manager.visualization == .parametricSwarm { parametricSwarmSection }
         if manager.visualization == .particleStorm { particleStormSection }
         if manager.visualization == .mercuryStorm { mercuryStormSection }
@@ -1609,6 +1610,49 @@ struct SidePanel: View {
                 LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation))
                     .font(.caption)
                 Slider(value: Bindable(cfg).saturation, in: 0...1)
+            }
+        }
+    }
+
+    // — Laser Beams controls — geometric projection / laser-show look.
+    //   Palette, density vs. negative space, transient punch, and beam look.
+    @ViewBuilder
+    private var laserBeamsSection: some View {
+        let cfg = manager.laserGeometry
+
+        GroupBox("Palette") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Base Hue", value: String(format: "%.2f", cfg.baseHue)).font(.caption)
+                Slider(value: Bindable(cfg).baseHue, in: 0...1)
+                LabeledContent("Palette Spread", value: String(format: "%.2f", cfg.paletteSpread)).font(.caption)
+                Slider(value: Bindable(cfg).paletteSpread, in: 0...1)
+                LabeledContent("Saturation", value: String(format: "%.2f", cfg.saturation)).font(.caption)
+                Slider(value: Bindable(cfg).saturation, in: 0...1)
+            }
+        }
+
+        GroupBox("Energy & Negative Space") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Density Ceiling", value: String(format: "%.2f", cfg.densityCeiling)).font(.caption)
+                Slider(value: Bindable(cfg).densityCeiling, in: 0.1...1)
+                LabeledContent("Negative-Space Bias", value: String(format: "%.2f", cfg.negativeSpaceBias)).font(.caption)
+                Slider(value: Bindable(cfg).negativeSpaceBias, in: 0...1)
+                LabeledContent("Onset Punch", value: String(format: "%.2f", cfg.onsetPunch)).font(.caption)
+                Slider(value: Bindable(cfg).onsetPunch, in: 0...2)
+            }
+        }
+
+        GroupBox("Beam Look") {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Beam Width", value: String(format: "%.3f", cfg.beamWidth)).font(.caption)
+                Slider(value: Bindable(cfg).beamWidth, in: 0.001...0.02)
+                LabeledContent("Exposure", value: String(format: "%.2f", cfg.exposure)).font(.caption)
+                Slider(value: Bindable(cfg).exposure, in: 0.5...3)
+                LabeledContent("Halo Tightness", value: String(format: "%.0f", cfg.haloSoftness)).font(.caption)
+                Slider(value: Bindable(cfg).haloSoftness, in: 6...60)
+                LabeledContent("Scan Speed", value: String(format: "%.2f", cfg.scanSpeed)).font(.caption)
+                Slider(value: Bindable(cfg).scanSpeed, in: 0...3)
+                Stepper("Symmetry: \(cfg.symmetry)", value: Bindable(cfg).symmetry, in: 3...32)
             }
         }
     }

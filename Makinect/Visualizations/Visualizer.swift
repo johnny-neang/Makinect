@@ -59,6 +59,7 @@ struct VisualizerInputs {
     let magneticIronFilings: MagneticIronFilingsConfig
     let boidsMurmuration: BoidsMurmurationConfig
     let memoryPalace: MemoryPalaceConfig
+    let laserGeometry: LaserGeometryConfig
 }
 
 /// Shared "everything you need" uniform struct used by most fragment-only
@@ -132,6 +133,8 @@ enum VisualizationKind: String, CaseIterable, Identifiable {
     case impastoPainter = "Impasto Painter"
     // — Casberry-inspired parametric swarm —
     case parametricSwarm = "Parametric Swarm"
+    // — Phase 1 light-show: geometric vector / laser look (docs/lightshow) —
+    case laserBeams = "Laser Beams"
 
     var id: String { rawValue }
 }
